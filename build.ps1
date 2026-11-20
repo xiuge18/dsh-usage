@@ -1,4 +1,4 @@
-# 一键编译：把 src/dsh-usage.cs 编成单文件 exe（需要 Windows 自带的 .NET Framework 4.x）
+# 一键编译：把 dsh-usage.cs 编成单文件 exe（需要 Windows 自带的 .NET Framework 4.x）
 # 用法：右键“使用 PowerShell 运行”，或在 PowerShell 里执行 .\build.ps1
 param(
     [string]$Out
@@ -11,9 +11,9 @@ $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 if (-not (Test-Path $csc)) { $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe' }
 if (-not (Test-Path $csc)) { throw '没找到 csc.exe，请先安装 .NET Framework 4.x' }
 
-$src  = Join-Path $root 'src\dsh-usage.cs'
-$icon = Join-Path $root 'src\dsh.ico'
-$libs = Join-Path $root 'libs'
+$src  = Join-Path $root 'dsh-usage.cs'
+$icon = Join-Path $root 'dsh.ico'
+$libs = $root
 
 $dlls = @(
     'ZstdSharp',
@@ -49,3 +49,4 @@ $cargs = @(
 & $csc @cargs
 if ($LASTEXITCODE -ne 0) { throw "编译失败（exit $LASTEXITCODE）" }
 Write-Host ('编译完成：' + $Out + '  (' + [int]((Get-Item $Out).Length / 1024) + ' KB)')
+

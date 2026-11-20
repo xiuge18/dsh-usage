@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="docs/icon.png" width="110" alt="DSH记账">
+  <img src="icon.png" width="110" alt="DSH记账">
 </p>
 
 <h1 align="center">DSH记账</h1>
 
 <p align="center">把你本机 DeepSeek Harness（dsh）的会话记录算成一笔账：用了多少 token、花了多少钱、花在高峰还是闲时。</p>
 
-![主界面](docs/screenshot-main.png)
+![主界面](screenshot-main.png)
 
 ## 这是什么
 
@@ -65,17 +65,17 @@ DSH记账 就是把这些本地记录读出来做汇总：按会话、按子智�
 
 产物是 `DSH记账.exe`，图为内嵌资源，图标已打进 exe，分发给别人只需要这一个文件。
 
-目录结构：
+目录结构（全部在根目录，无子文件夹）：
 
 ```
-├─ src/
-│  ├─ dsh-usage.cs     全部源码（单文件）
-│  └─ dsh.ico          应用图标
-├─ libs/               6 个 MIT 许可的依赖程序集
-├─ docs/               README 配图
-├─ build.ps1           一键编译
-├─ LICENSE             MIT
-└─ THIRD-PARTY-NOTICES.txt
+dsh-usage.cs              全部源码（单文件，约 7200 行）
+dsh.ico                   应用图标
+build.ps1                 一键编译
+ZstdSharp.dll 等 6 个       MIT 许可的依赖程序集，编译时内嵌进 exe
+icon.png 等 3 张           README 配图
+LICENSE                   MIT
+THIRD-PARTY-NOTICES.txt   第三方许可声明
+.gitignore                排除 exe / 缓存 / 本地配置
 ```
 
 ## 常见问题
@@ -84,7 +84,7 @@ DSH记账 就是把这些本地记录读出来做汇总：按会话、按子智�
 本机还没有 dsh 的会话缓存。先用 dsh 聊过天、产生了会话，再点【刷新】；或者在【设置】里手动指目录。
 
 **提示"未知发布者"**
-个人开发的小工具没有代码签名证书，Windows SmartScreen 会提示。点"更多信息 → 仍要运行"即可。想验证安全性可以直接读 `src/dsh-usage.cs`，也可以自己编译。
+个人开发的小工具没有代码签名证书，Windows SmartScreen 会提示。点"更多信息 → 仍要运行"即可。想验证安全性可以直接读 `dsh-usage.cs`，也可以自己编译。
 
 **数字和官方账单对不上**
 见上面"它算得准吗"，这是按单价估算的结果，不是账单复刻。
@@ -97,7 +97,7 @@ Windows 有图标缓存。改文件名或重启资源管理器可以刷新。
 
 ## 截图
 
-![使用教程](docs/screenshot-guide.png)
+![使用教程](screenshot-guide.png)
 
 ## 免责声明
 
@@ -108,3 +108,4 @@ Windows 有图标缓存。改文件名或重启资源管理器可以刷新。
 ## 许可证
 
 [MIT](LICENSE)。随附的第三方组件（ZstdSharp 等 6 个程序集）同样是 MIT，版权声明见 [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt)。
+
