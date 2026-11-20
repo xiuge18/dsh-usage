@@ -1,0 +1,19 @@
+# 编译产物
+*.exe
+*.dll.bak
+bin/
+obj/
+
+# 运行期生成的东西，绝不入库
+*.cache
+*.cache.tmp
+config.ini
+error.log
+
+# 编辑器 / 系统垃圾
+.vs/
+.vscode/
+*.user
+*.suo
+Thumbs.db
+desktop.ini
