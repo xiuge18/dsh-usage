@@ -1,0 +1,51 @@
+DSH记账 — 第三方组件声明
+==================================================
+
+本项目的 src/dsh-usage.cs 为原创代码，以 MIT 许可证发布（见 LICENSE）。
+libs/ 目录下随源码一起分发的 6 个 .NET 程序集均为第三方组件，
+其版权归原作者所有，均使用 MIT 许可证，允许再分发，但需保留下列版权声明。
+
+编译时这 6 个程序集会作为资源嵌入 exe，运行时释放到临时目录加载，
+以保证最终产物只有一个可执行文件。
+
+
+1. ZstdSharp.dll
+   项目：https://github.com/oleg-st/ZstdSharp
+   用途：解码 DeepSeek Harness 会话原始记录（zstd 压缩）
+   许可证：MIT License
+   版权：Copyright (c) 2021 Oleg Stepanischev and contributors
+   说明：Zstandard 本身的实现来自 Facebook/Meta，使用 BSD 许可证；
+         本组件是把 zstd 移植到 C# 的托管实现。
+
+
+2. System.Memory.dll
+3. System.Buffers.dll
+4. System.Numerics.Vectors.dll
+5. System.Runtime.CompilerServices.Unsafe.dll
+6. System.Threading.Tasks.Extensions.dll
+   项目：https://github.com/dotnet/runtime
+   用途：ZstdSharp 的依赖（Span / Memory 等基础类型）
+   许可证：MIT License
+   版权：Copyright (c) .NET Foundation and Contributors
+
+
+MIT 许可证全文（上述组件通用）
+--------------------------------------------------
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
