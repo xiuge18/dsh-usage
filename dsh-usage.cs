@@ -5348,7 +5348,20 @@ namespace DshUsage
         public List<string> Labels = new List<string>();
         public List<double> OffCost = new List<double>();
         public List<double> PkCost = new List<double>();
+        public List<double> OffTok = new List<double>();
+        public List<double> PkTok = new List<double>();
+        public bool TokMode = false;
         public string Title = "";
+
+        double Get1(int i) { return TokMode ? (i < OffTok.Count ? OffTok[i] : 0) : (i < OffCost.Count ? OffCost[i] : 0); }
+        double Get2(int i) { return TokMode ? (i < PkTok.Count ? PkTok[i] : 0) : (i < PkCost.Count ? PkCost[i] : 0); }
+
+        static string TokText(double v)
+        {
+            if (v >= 1000000) return string.Format("{0:F1}M", v / 1000000.0);
+            if (v >= 1000) return string.Format("{0:F0}K", v / 1000.0);
+            return v.ToString("F0");
+        }
 
         public BarChartPanel()
         {
@@ -5414,7 +5427,7 @@ namespace DshUsage
             double total = 0, max = 0;
             for (int i = 0; i < n; i++)
             {
-                double v = OffCost[i] + PkCost[i];
+                double v = Get1(i) + Get2(i);
                 total += v;
                 if (v > max) max = v;
             }
@@ -5427,7 +5440,7 @@ namespace DshUsage
 
             if (Title.Length > 0)
                 g.DrawString(Title, fontT, new SolidBrush(Ui.Ink), Ui.S(16), Ui.S(8));
-            string tot = "¥" + total.ToString("N2");
+            string tot = TokMode ? (TokText(total) + " token") : ("¥" + total.ToString("N2"));
             SizeF tsz = g.MeasureString(tot, fontT);
             float tx = Width - Ui.S(20) - tsz.Width;
             g.DrawString(tot, fontT, new SolidBrush(Ui.Ink2), tx, Ui.S(8));
@@ -5439,7 +5452,7 @@ namespace DshUsage
                 double v = step * i;
                 int y = area.Bottom - (int)(area.Height * (v / top));
                 g.DrawLine(gridPen, area.Left, y, area.Right, y);
-                g.DrawString("¥" + v.ToString(fmt), font, new SolidBrush(Ui.Ink3), 8, y - 7);
+                g.DrawString(TokMode ? TokText(v) : ("¥" + v.ToString(fmt)), font, new SolidBrush(Ui.Ink3), 8, y - 7);
             }
 
             double slot = (double)area.Width / n;
@@ -5451,8 +5464,8 @@ namespace DshUsage
             for (int i = 0; i < n; i++)
             {
                 int x = area.Left + (int)(slot * i) + (int)((slot - barW) / 2);
-                int h1 = (int)(OffCost[i] / top * area.Height);
-                int h2 = (int)(PkCost[i] / top * area.Height);
+                int h1 = (int)(Get1(i) / top * area.Height);
+                int h2 = (int)(Get2(i) / top * area.Height);
                 if (i == hover)
                     g.FillRectangle(hoverBrush, area.Left + (int)(slot * i), area.Top, (int)Math.Max(1, slot), area.Height);
                 if (h1 > 0) g.FillRectangle(offBrush, x, area.Bottom - h1, barW, h1);
@@ -5478,8 +5491,12 @@ namespace DshUsage
             if (hover >= 0 && hover < n)
             {
                 string l1 = Labels[hover];
-                string l2 = "闲 ¥" + OffCost[hover].ToString("N2") + "   峰 ¥" + PkCost[hover].ToString("N2");
-                string l3 = "合计 ¥" + (OffCost[hover] + PkCost[hover]).ToString("N2");
+                string l2 = TokMode
+                    ? ("闲 " + TokText(Get1(hover)) + "   峰 " + TokText(Get2(hover)))
+                    : ("闲 ¥" + Get1(hover).ToString("N2") + "   峰 ¥" + Get2(hover).ToString("N2"));
+                string l3 = TokMode
+                    ? ("合计 " + TokText(Get1(hover) + Get2(hover)) + " token")
+                    : ("合计 ¥" + (Get1(hover) + Get2(hover)).ToString("N2"));
                 SizeF s1 = g.MeasureString(l1, fontT);
                 SizeF s2 = g.MeasureString(l2, font);
                 float bw = Math.Max(s1.Width, s2.Width) + 24;
@@ -6339,31 +6356,52 @@ namespace DshUsage
             wrapC.Controls.Add(g5);
             wrapC.Controls.Add(barC);
 
-            // --- 花费图（仿官网柱状图） ---
+            // --- 花费 / 用量双图（上=每天花费，下=每天 token） ---
             var wrapB = new Panel();
             wrapB.BackColor = Color.White;
             var bar = new BarChartPanel();
             bar.Dock = DockStyle.Fill;
+            bar.Margin = new Padding(0);
             bar.Title = "每天花费（闲时 + 高峰）";
+            var barTok = new BarChartPanel();
+            barTok.Dock = DockStyle.Fill;
+            barTok.Margin = new Padding(0);
+            barTok.TokMode = true;
+            barTok.Title = "每天 token 消耗（闲时 + 高峰）";
             var dayAsc = new List<string>(byDay.Keys);
             dayAsc.Sort(StringComparer.Ordinal);
             foreach (string k in dayAsc)
             {
                 Slot v = byDay[k];
-                bar.Labels.Add(k.Length >= 10 ? k.Substring(5) : k);
+                string lb = k.Length >= 10 ? k.Substring(5) : k;
+                bar.Labels.Add(lb);
                 bar.OffCost.Add(v.OffCost());
                 bar.PkCost.Add(v.PkCost());
+                barTok.Labels.Add(lb);
+                barTok.OffTok.Add((double)v.OffTokens());
+                barTok.PkTok.Add((double)v.PkTokens());
             }
+            var tblB = new TableLayoutPanel();
+            tblB.Dock = DockStyle.Fill;
+            tblB.Padding = new Padding(0);
+            tblB.ColumnCount = 1;
+            tblB.RowCount = 2;
+            tblB.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            tblB.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+            tblB.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+            tblB.CellBorderStyle = TableLayoutPanelCellBorderStyle.Single;
+            tblB.Controls.Add(bar, 0, 0);
+            tblB.Controls.Add(barTok, 0, 1);
             var tipB = new Label();
             tipB.Dock = DockStyle.Bottom;
             tipB.Height = 28;
             tipB.ForeColor = Color.FromArgb(110, 112, 122);
-            tipB.Text = "    浅蓝＝闲时花费，深蓝＝高峰花费；柱顶到柱底的整段就是这个会话（或所选会话）一天的花费。";
-            wrapB.Controls.Add(bar);
+            tipB.Text = "    两张图横坐标对齐，可以直接横向对比：某天 token 涨得猛、花费涨得不多，说明当天命中率高、单位成本低。";
+            wrapB.Controls.Add(tblB);
             wrapB.Controls.Add(tipB);
 
             Tabs.TabPages.Add(Page("按天", g1));
-            Tabs.TabPages.Add(Page("花费图", wrapB, "每日花费堆叠柱：深蓝=闲时、亮蓝=高峰；右上为区间合计"));
+            Tabs.TabPages.Add(Page("花费·用量", wrapB, "上：每天花费（¥），下：每天 token 消耗；浅蓝=闲时、深蓝=高峰，右上为区间合计"));
             Tabs.TabPages.Add(Page("按小时", g2));
             Tabs.TabPages.Add(Page("按项目", g3));
             Tabs.TabPages.Add(Page("按模型", g7, "按每个会话最后使用的模型汇总（会话中途换模型的仍归到最后一个）"));
