@@ -363,17 +363,20 @@ namespace DshUsage
     // 统一的浅色主题与控件工厂
     static class Ui
     {
-        public static readonly Color Bg = Color.FromArgb(238, 241, 246);
-        public static readonly Color Line = Color.FromArgb(227, 231, 239);
-        public static readonly Color Line2 = Color.FromArgb(237, 240, 245);
-        public static readonly Color Ink = Color.FromArgb(27, 33, 48);
-        public static readonly Color Ink2 = Color.FromArgb(90, 98, 114);
-        public static readonly Color Ink3 = Color.FromArgb(139, 147, 163);
-        public static readonly Color Accent = Color.FromArgb(47, 107, 224);
-        public static readonly Color AccentSoft = Color.FromArgb(234, 241, 254);
-        public static readonly Color AccentLine = Color.FromArgb(191, 212, 251);
+        // 玻璃主题：背景柔光缓存
+        static Bitmap bgCache;
+        static Size bgCacheSize;
+        public static readonly Color Bg = Color.FromArgb(245, 247, 251);
+        public static readonly Color Line = Color.FromArgb(228, 233, 242);
+        public static readonly Color Line2 = Color.FromArgb(238, 242, 248);
+        public static readonly Color Ink = Color.FromArgb(23, 30, 43);
+        public static readonly Color Ink2 = Color.FromArgb(88, 97, 112);
+        public static readonly Color Ink3 = Color.FromArgb(136, 145, 161);
+        public static readonly Color Accent = Color.FromArgb(0, 122, 255);
+        public static readonly Color AccentSoft = Color.FromArgb(232, 243, 255);
+        public static readonly Color AccentLine = Color.FromArgb(186, 214, 255);
         public static readonly Color Nice = Color.FromArgb(31, 169, 122);
-        public static readonly Color RowSel = Color.FromArgb(241, 246, 254);
+        public static readonly Color RowSel = Color.FromArgb(240, 246, 255);
 
         static float k = 0f;
         // 当前屏幕缩放比例（DPI/96）。用于自绘控件里那些不受 WinForms 自动缩放影响的像素值
@@ -403,8 +406,60 @@ namespace DshUsage
             if (K > 1.001f) c.Scale(new SizeF(K, K));
         }
 
-        public static Font F(float size) { return new Font("微软雅黑", size); }
-        public static Font FB(float size) { return new Font("微软雅黑", size, FontStyle.Bold); }
+        public static FontFamily FamReg;
+
+        // 入场动画：0..1，DrawCard 用它做“上滑 + 淡入”
+        public static float CardAnim = 1f;
+        public static bool NoAnim = false;
+        static System.Windows.Forms.Timer cardAnimTimer;
+
+        public static Color Blend(Color a, Color b, float t)
+        {
+            if (t < 0f) t = 0f;
+            if (t > 1f) t = 1f;
+            return Color.FromArgb(
+                (int)Math.Round(a.A + (b.A - a.A) * t),
+                (int)Math.Round(a.R + (b.R - a.R) * t),
+                (int)Math.Round(a.G + (b.G - a.G) * t),
+                (int)Math.Round(a.B + (b.B - a.B) * t));
+        }
+
+        public static void StartCardAnim(System.Windows.Forms.Form f, int ms, Action<float> onTick)
+        {
+            if (f == null || NoAnim) return;
+            if (cardAnimTimer != null) { cardAnimTimer.Stop(); cardAnimTimer.Dispose(); cardAnimTimer = null; }
+            CardAnim = 0f;
+            DateTime t0 = DateTime.Now;
+            cardAnimTimer = new System.Windows.Forms.Timer();
+            cardAnimTimer.Interval = 24;
+            cardAnimTimer.Tick += delegate
+            {
+                float p = (float)((DateTime.Now - t0).TotalMilliseconds / ms);
+                if (p >= 1f) p = 1f;
+                float e = 1f - (float)Math.Pow(1f - p, 3);
+                CardAnim = e;
+                if (onTick != null) onTick(e);
+                if (f.IsDisposed) { cardAnimTimer.Stop(); cardAnimTimer.Dispose(); cardAnimTimer = null; CardAnim = 1f; return; }
+                if (p >= 1f && cardAnimTimer != null)
+                {
+                    cardAnimTimer.Stop();
+                    cardAnimTimer.Dispose();
+                    cardAnimTimer = null;
+                    CardAnim = 1f;
+                    // 帧率实测：线程空闲时约 30fps（14 帧 / 467ms），启动期会被加载吞掉，故首次不播
+                }
+            };
+            cardAnimTimer.Start();
+        }
+        public static FontFamily FamBold;
+
+        public static Font F(float size) { return FamReg != null ? new Font(FamReg, size) : new Font("微软雅黑", size); }
+        public static Font FB(float size)
+        {
+            if (FamBold != null) return new Font(FamBold, size);
+            if (FamReg != null) return new Font(FamReg, size, FontStyle.Bold);
+            return new Font("微软雅黑", size, FontStyle.Bold);
+        }
 
         public static GraphicsPath RoundPath(Rectangle r, int rad)
         {
@@ -459,11 +514,124 @@ namespace DshUsage
 
         public static void DrawCard(Graphics g, Rectangle r, Color fill, Color border, int rad)
         {
+            DrawCard(g, r, fill, border, rad, 1f);
+        }
+
+        public static void DrawCard(Graphics g, Rectangle r, Color fill, Color border, int rad, float anim)
+        {
             g.SmoothingMode = SmoothingMode.AntiAlias;
+            float an = anim;
+            if (an < 0.999f)
+            {
+                if (an < 0f) an = 0f;
+                r = new Rectangle(r.X, r.Y + (int)Math.Round((1f - an) * S(5)), r.Width, r.Height);
+            }
+            int aSh1 = (int)Math.Round(12f * an);
+            int aSh2 = (int)Math.Round(16f * an);
+            int aSh3 = (int)Math.Round(20f * an);
+            int aGlass = (int)Math.Round(172f * an);
+            int aTop = (int)Math.Round(46f * an);
+            int aIn = (int)Math.Round(168f * an);
+            int aOut = (int)Math.Round(26f * an);
+            // 大扩散柔和投影（三层，越往外越淡），模拟玻璃浮在背景上
+            using (GraphicsPath sh1 = RoundPath(new Rectangle(r.X - S(3), r.Y + S(7), r.Width + S(6), r.Height + S(1)), rad + S(3)))
+            using (SolidBrush sb1 = new SolidBrush(Color.FromArgb(aSh1, 96, 116, 158)))
+                g.FillPath(sb1, sh1);
+            using (GraphicsPath sh2 = RoundPath(new Rectangle(r.X, r.Y + S(5), r.Width, r.Height), rad))
+            using (SolidBrush sb2 = new SolidBrush(Color.FromArgb(aSh2, 96, 116, 158)))
+                g.FillPath(sb2, sh2);
+            using (GraphicsPath sh3 = RoundPath(new Rectangle(r.X, r.Y + S(2), r.Width, r.Height), rad))
+            using (SolidBrush sb3 = new SolidBrush(Color.FromArgb(aSh3, 96, 116, 158)))
+                g.FillPath(sb3, sh3);
+
+            Color glass = (fill.A >= 250 && fill.R >= 250 && fill.G >= 250 && fill.B >= 250)
+                ? Color.FromArgb(aGlass, 255, 255, 255)
+                : fill;
             using (GraphicsPath path = RoundPath(r, rad))
             {
-                using (SolidBrush b = new SolidBrush(fill)) g.FillPath(b, path);
-                using (Pen pen = new Pen(border)) g.DrawPath(pen, path);
+                // 玻璃主体
+                using (SolidBrush b = new SolidBrush(glass)) g.FillPath(b, path);
+                // 顶部高光：上半部分由白到透明，模拟受光面
+                Rectangle topRect = new Rectangle(r.X, r.Y, r.Width, Math.Max(S(2), r.Height / 3));
+                using (GraphicsPath topPath = RoundPath(r, rad))
+                {
+                    Region old = g.Clip;
+                    g.SetClip(topRect);
+                    using (LinearGradientBrush lb = new LinearGradientBrush(
+                        new Rectangle(r.X, r.Y, r.Width, Math.Max(S(4), r.Height / 3)),
+                        Color.FromArgb(aTop, 255, 255, 255), Color.FromArgb(0, 255, 255, 255), 90f))
+                        g.FillPath(lb, topPath);
+                    g.Clip = old;
+                }
+                // 内圈白色高光边（1px，向内收半像素）
+                using (GraphicsPath ip = RoundPath(new Rectangle(r.X + 1, r.Y + 1, r.Width - 2, r.Height - 2), Math.Max(2, rad - 1)))
+                using (Pen pen = new Pen(Color.FromArgb(aIn, 255, 255, 255), 1f))
+                    g.DrawPath(pen, ip);
+                // 外圈极淡冷色边，锁住轮廓
+                using (Pen pen = new Pen(Color.FromArgb(aOut, 120, 140, 175), 1f))
+                    g.DrawPath(pen, path);
+                if (border.A > 0)
+                {
+                    using (Pen pen = new Pen(border)) g.DrawPath(pen, path);
+                }
+            }
+        }
+
+        static void Glow(Graphics g, Rectangle r, Color c)
+        {
+            using (GraphicsPath p = new GraphicsPath())
+            {
+                p.AddEllipse(r);
+                using (PathGradientBrush pb = new PathGradientBrush(p))
+                {
+                    pb.CenterColor = c;
+                    pb.SurroundColors = new Color[] { Color.FromArgb(0, c.R, c.G, c.B) };
+                    pb.CenterPoint = new PointF(r.X + r.Width * 0.5f, r.Y + r.Height * 0.5f);
+                    g.FillPath(pb, p);
+                }
+            }
+        }
+
+        public static void PaintGlassBg(Graphics g, Size sz)
+        {
+            if (sz.Width <= 0 || sz.Height <= 0) return;
+            if (bgCache == null || bgCacheSize.Width != sz.Width || bgCacheSize.Height != sz.Height)
+            {
+                if (bgCache != null) { bgCache.Dispose(); bgCache = null; }
+                bgCache = RenderBg(sz);
+                bgCacheSize = sz;
+            }
+            g.DrawImageUnscaled(bgCache, 0, 0);
+        }
+
+        static Bitmap RenderBg(Size sz)
+        {
+            Bitmap bmp = new Bitmap(sz.Width, sz.Height);
+            using (Graphics g = Graphics.FromImage(bmp))
+            {
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                using (LinearGradientBrush lb = new LinearGradientBrush(
+                    new Rectangle(0, 0, sz.Width, sz.Height),
+                    Color.FromArgb(244, 248, 254), Color.FromArgb(224, 233, 248), 60f))
+                    g.FillRectangle(lb, 0, 0, sz.Width, sz.Height);
+                Glow(g, new Rectangle(-sz.Width / 4, -sz.Height / 3, sz.Width * 9 / 10, sz.Height * 4 / 5),
+                    Color.FromArgb(112, 168, 205, 250));
+                Glow(g, new Rectangle(sz.Width / 2, sz.Height / 3, sz.Width * 4 / 5, sz.Height * 9 / 10),
+                    Color.FromArgb(96, 200, 188, 246));
+                Glow(g, new Rectangle(sz.Width / 5, -sz.Height / 4, sz.Width * 7 / 10, sz.Height * 3 / 5),
+                    Color.FromArgb(72, 236, 242, 252));
+            }
+            return bmp;
+        }
+
+        public static void ApplyRoundRegion(Control c, int rad)
+        {
+            if (c.Width <= 0 || c.Height <= 0) return;
+            using (GraphicsPath p = RoundPath(new Rectangle(0, 0, c.Width, c.Height), rad))
+            {
+                Region nr = new Region(p);
+                if (c.Region != null) c.Region.Dispose();
+                c.Region = nr;
             }
         }
 
@@ -475,11 +643,14 @@ namespace DshUsage
             b.FlatStyle = FlatStyle.Flat;
             b.FlatAppearance.BorderSize = 1;
             b.FlatAppearance.BorderColor = Line;
-            b.BackColor = Color.White;
+            b.FlatAppearance.MouseOverBackColor = Color.FromArgb(246, 249, 254);
+            b.FlatAppearance.MouseDownBackColor = Color.FromArgb(238, 243, 251);
+            b.BackColor = Color.FromArgb(252, 253, 255);
             b.ForeColor = Ink2;
             b.Size = new Size(w, h);
             b.Cursor = Cursors.Hand;
             b.UseVisualStyleBackColor = false;
+            RoundControl(b, 8);
             return b;
         }
 
@@ -489,6 +660,8 @@ namespace DshUsage
             b.BackColor = Accent;
             b.ForeColor = Color.White;
             b.FlatAppearance.BorderColor = Accent;
+            b.FlatAppearance.MouseOverBackColor = Color.FromArgb(64, 118, 232);
+            b.FlatAppearance.MouseDownBackColor = Color.FromArgb(38, 88, 200);
             return b;
         }
     }
@@ -1534,6 +1707,37 @@ namespace DshUsage
             base.OnFormClosing(e);
         }
 
+        Label[] kpiVs;
+        Panel[] kpiCards;
+        Panel filterCard;
+
+        protected override void OnShown(EventArgs e)
+        {
+            base.OnShown(e);
+            // 入场动画已撤（实测持续掉帧），数值颜色一律按正常墨色
+            if (kpiVs == null) return;
+            foreach (Label l in kpiVs) if (l != null) l.ForeColor = Ui.Ink;
+        }
+
+        [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+        static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            try
+            {
+                int cap = ColorTranslator.ToWin32(Color.FromArgb(244, 248, 254));
+                DwmSetWindowAttribute(Handle, 35, ref cap, 4);
+            }
+            catch { }
+        }
+
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            Ui.PaintGlassBg(e.Graphics, ClientSize);
+        }
+
         public MainForm()
         {
             cfg = Config.Load();
@@ -1545,7 +1749,7 @@ namespace DshUsage
             }
             Pricing.OffMiss = cfg.PriceOffMiss; Pricing.OffHit = cfg.PriceOffHit; Pricing.OffOut = cfg.PriceOffOut;
             Pricing.PkMiss = cfg.PricePkMiss; Pricing.PkHit = cfg.PricePkHit; Pricing.PkOut = cfg.PricePkOut;
-            listFont = new Font("微软雅黑", 9f);
+            listFont = Ui.F(9f);
 
             AutoScaleMode = AutoScaleMode.None;
             Text = Program.AppTitle;
@@ -1553,7 +1757,8 @@ namespace DshUsage
             MinimumSize = new Size(1120, 640);
             StartPosition = FormStartPosition.CenterScreen;
             BackColor = Ui.Bg;
-            Font = new Font("微软雅黑", 9f);
+            Font = Ui.F(9f);
+            DoubleBuffered = true;
 
             BuildGrid();
 
@@ -1563,7 +1768,7 @@ namespace DshUsage
             BuildBottom();
 
             var status = new StatusStrip();
-            status.BackColor = Color.FromArgb(245, 247, 250);
+            status.BackColor = Color.FromArgb(238, 243, 251);
             status.SizingGrip = false;
             lblStatus = new ToolStripStatusLabel("");
             lblStatus.ForeColor = Color.FromArgb(124, 132, 148);
@@ -1575,12 +1780,13 @@ namespace DshUsage
 
             gridHost = new Panel();
             gridHost.Dock = DockStyle.Fill;
-            gridHost.BackColor = Ui.Bg;
-            gridHost.Padding = new Padding(16, 2, 16, 8);
+            gridHost.BackColor = Color.Transparent;
+            gridHost.Padding = new Padding(16, 10, 16, 10);
 
             var gridCard = new Panel();
             gridCard.Dock = DockStyle.Fill;
-            gridCard.BackColor = Color.White;
+            gridCard.BackColor = Color.Transparent;
+            gridCard.Padding = new Padding(Ui.S(1), Ui.S(1), Ui.S(3), Ui.S(3));
             gridCard.Paint += new PaintEventHandler(DrawCardBorder);
             gridCard.Controls.Add(grid);
             gridHost.Controls.Add(gridCard);
@@ -1655,7 +1861,7 @@ namespace DshUsage
             int y = Ui.S(44);
             int x = Ui.S(14);
             lblKind.Location = new Point(x, y + Ui.S(5));
-            lblKind.BackColor = Color.White;
+            lblKind.BackColor = Color.Transparent;
             x += lblKind.Width + Ui.S(8);
 
             cmbKind.Location = new Point(x, y);
@@ -1693,31 +1899,44 @@ namespace DshUsage
         {
             header = new Panel();
             header.Dock = DockStyle.Top;
-            header.Height = 62;
-            header.BackColor = Ui.Bg;
+            header.Height = 70;
+            header.BackColor = Color.Transparent;
+            header.Paint += new PaintEventHandler(delegate(object snd, PaintEventArgs pe)
+            {
+                Graphics g = pe.Graphics;
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                Rectangle br = new Rectangle(Ui.S(18), Ui.S(19), Ui.S(30), Ui.S(30));
+                using (GraphicsPath p = Ui.RoundPath(br, Ui.S(9)))
+                using (var fb = new SolidBrush(Ui.Accent)) g.FillPath(fb, p);
+                var sf = new StringFormat();
+                sf.Alignment = StringAlignment.Center;
+                sf.LineAlignment = StringAlignment.Center;
+                using (var ff = Ui.FB(11.5f))
+                    g.DrawString("D", ff, Brushes.White, br, sf);
+            });
 
             Label t1 = new Label();
             t1.Text = "会话用量";
             t1.AutoSize = true;
-            t1.Font = Ui.FB(15f);
+            t1.Font = Ui.FB(16f);
             t1.ForeColor = Ui.Ink;
-            t1.BackColor = Ui.Bg;
-            t1.Location = new Point(18, 9);
+            t1.BackColor = Color.Transparent;
+            t1.Location = new Point(60, 12);
 
             Label t2 = new Label();
             t2.Text = "读取 ~/.dsh 会话缓存与原始记录 · 峰谷分时计价 · 主对话与子智能体分开计算";
             t2.AutoSize = true;
             t2.Font = Ui.F(8.5f);
             t2.ForeColor = Ui.Ink3;
-            t2.BackColor = Ui.Bg;
-            t2.Location = new Point(20, 36);
+            t2.BackColor = Color.Transparent;
+            t2.Location = new Point(61, 43);
 
             FlowLayoutPanel flow = new FlowLayoutPanel();
             flow.Dock = DockStyle.Right;
             flow.Width = 352;
             flow.FlowDirection = FlowDirection.RightToLeft;
             flow.WrapContents = false;
-            flow.BackColor = Ui.Bg;
+            flow.BackColor = Color.Transparent;
             flow.Padding = new Padding(0, 17, 18, 0);
 
             btnRefresh = Ui.Primary("刷新", 88, 30);
@@ -1768,26 +1987,27 @@ namespace DshUsage
             grid.MultiSelect = false;
             grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
             grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
-            grid.ColumnHeadersHeight = Ui.S(34);
+            grid.ColumnHeadersHeight = Ui.S(36);
             grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
-            grid.RowTemplate.Height = Ui.S(36);
+            grid.RowTemplate.Height = Ui.S(38);
             grid.ScrollBars = ScrollBars.Vertical;
-            grid.CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal;
-            grid.GridColor = Ui.Line2;
+            grid.CellBorderStyle = DataGridViewCellBorderStyle.None;
+            grid.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None;
+            grid.GridColor = Color.FromArgb(246, 250, 255);
             grid.EnableHeadersVisualStyles = false;
 
-            grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(244, 246, 250);
-            grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.FromArgb(108, 117, 135);
+            grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(241, 246, 252);
+            grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.FromArgb(96, 106, 124);
             grid.ColumnHeadersDefaultCellStyle.Font = Ui.F(9f);
             grid.ColumnHeadersDefaultCellStyle.Padding = new Padding(6, 0, 6, 0);
-            grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = Color.FromArgb(244, 246, 250);
+            grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = Color.FromArgb(241, 246, 252);
 
-            grid.DefaultCellStyle.BackColor = Color.White;
+            grid.DefaultCellStyle.BackColor = Color.FromArgb(248, 251, 255);
             grid.DefaultCellStyle.ForeColor = Ui.Ink;
             grid.DefaultCellStyle.Font = Ui.F(9f);
             grid.DefaultCellStyle.SelectionBackColor = Ui.RowSel;
             grid.DefaultCellStyle.SelectionForeColor = Ui.Ink;
-            grid.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(252, 253, 255);
+            grid.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(244, 248, 254);
 
             grid.Columns.Add(MakeCol("", Ui.S(34), DataGridViewAutoSizeColumnMode.None, 0, DataGridViewContentAlignment.MiddleLeft));
             grid.Columns.Add(MakeCol("主/子", Ui.S(64), DataGridViewAutoSizeColumnMode.None, 0, DataGridViewContentAlignment.MiddleCenter));
@@ -1813,32 +2033,35 @@ namespace DshUsage
             menu.MenuItems.Add("只看这个项目", new EventHandler(delegate { FilterByProject(); }));
             menu.MenuItems.Add("复制这条会话", new EventHandler(delegate { CopyOneSession(); }));
             grid.ContextMenu = menu;
+            grid.Resize += new EventHandler(delegate(object sR, EventArgs aR) { Ui.ApplyRoundRegion(grid, Ui.S(10)); });
+            grid.HandleCreated += new EventHandler(delegate(object sH, EventArgs aH) { Ui.ApplyRoundRegion(grid, Ui.S(10)); });
         }
 
         void BuildKpi()
         {
             kpiBar = new Panel();
             kpiBar.Dock = DockStyle.Top;
-            kpiBar.Height = 98;
-            kpiBar.BackColor = Ui.Bg;
+            kpiBar.Height = 100;
+            kpiBar.BackColor = Color.Transparent;
             kpiBar.Padding = new Padding(16, 0, 16, 8);
 
             TableLayoutPanel tbl = new TableLayoutPanel();
             tbl.Dock = DockStyle.Fill;
             tbl.ColumnCount = 4;
             tbl.RowCount = 1;
-            tbl.BackColor = Ui.Bg;
+            tbl.BackColor = Color.Transparent;
             for (int i = 0; i < 4; i++) tbl.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25f));
 
             string[] ks = new string[] { "总 token（全量）", "本月花费", "会话数", "高峰占比" };
             Label[] vs = new Label[4];
             Label[] ns = new Label[4];
+            Panel[] cards = new Panel[4];
             for (int i = 0; i < 4; i++)
             {
                 Panel card = new Panel();
                 card.Dock = DockStyle.Fill;
-                card.Margin = new Padding(0, 0, 8, 0);
-                card.BackColor = Ui.Bg;
+                card.Margin = new Padding(0, 0, 10, 0);
+                card.BackColor = Color.Transparent;
                 card.Paint += new PaintEventHandler(KpiCardPaint);
 
                 Label k = new Label();
@@ -1846,32 +2069,40 @@ namespace DshUsage
                 k.AutoSize = true;
                 k.Font = Ui.F(9f);
                 k.ForeColor = Ui.Ink3;
-                k.BackColor = Color.White;
-                k.Location = new Point(14, 10);
+                k.BackColor = Color.Transparent;
+                k.Location = new Point(16, 13);
 
                 Label v = new Label();
                 v.Text = "—";
                 v.AutoSize = true;
-                v.Font = Ui.FB(15f);
+                v.Font = Ui.FB(16.5f);
                 v.ForeColor = Ui.Ink;
-                v.BackColor = Color.White;
-                v.Location = new Point(12, 27);
+                v.BackColor = Color.Transparent;
+                v.Location = new Point(14, 32);
 
                 Label n = new Label();
                 n.Text = "";
                 n.AutoSize = true;
                 n.Font = Ui.F(8.5f);
                 n.ForeColor = Ui.Ink3;
-                n.BackColor = Color.White;
-                n.Location = new Point(14, 60);
+                n.BackColor = Color.Transparent;
+                n.Location = new Point(16, 66);
 
                 card.Controls.Add(k);
                 card.Controls.Add(v);
                 card.Controls.Add(n);
+                EventHandler hv = delegate { card.Invalidate(); };
+                card.MouseEnter += hv; card.MouseLeave += hv;
+                k.MouseEnter += hv; k.MouseLeave += hv;
+                v.MouseEnter += hv; v.MouseLeave += hv;
+                n.MouseEnter += hv; n.MouseLeave += hv;
                 tbl.Controls.Add(card, i, 0);
                 vs[i] = v;
                 ns[i] = n;
+                cards[i] = card;
             }
+            kpiVs = vs;
+            kpiCards = cards;
             kpi1v = vs[0]; kpi2v = vs[1]; kpi3v = vs[2]; kpi4v = vs[3];
             kpi1n = ns[0]; kpi2n = ns[1]; kpi3n = ns[2]; kpi4n = ns[3];
             kpiBar.Controls.Add(tbl);
@@ -1884,18 +2115,18 @@ namespace DshUsage
             filterBar = new Panel();
             filterBar.Dock = DockStyle.Top;
             filterBar.Height = 96;
-            filterBar.BackColor = Ui.Bg;
+            filterBar.BackColor = Color.Transparent;
             filterBar.Padding = new Padding(16, 0, 16, 8);
 
             Panel card = new Panel();
             card.Dock = DockStyle.Fill;
-            card.BackColor = Color.White;
+            card.BackColor = Color.Transparent;
             card.Paint += new PaintEventHandler(FlatCardPaint);
 
             Panel box = new Panel();
             box.Location = new Point(12, 8);
             box.Size = new Size(252, 30);
-            box.BackColor = Color.White;
+            box.BackColor = Color.Transparent;
             box.Paint += new PaintEventHandler(SearchBoxPaint);
             box.Cursor = Cursors.IBeam;
 
@@ -1904,7 +2135,7 @@ namespace DshUsage
             ph.AutoSize = true;
             ph.Font = Ui.F(9f);
             ph.ForeColor = Ui.Ink3;
-            ph.BackColor = Color.White;
+            ph.BackColor = Color.Transparent;
             ph.Location = new Point(32, 7);
             ph.Cursor = Cursors.IBeam;
 
@@ -1999,7 +2230,7 @@ namespace DshUsage
             lk.Text = "类型";
             lk.AutoSize = true;
             lk.ForeColor = Ui.Ink3;
-            lk.BackColor = Color.White;
+            lk.BackColor = Color.Transparent;
             lk.Location = new Point(14, 49);
             lblKind = lk;
 
@@ -2035,7 +2266,7 @@ namespace DshUsage
             lblUpdated.Padding = new Padding(0, 0, 14, 4);
             lblUpdated.Font = Ui.F(8.5f);
             lblUpdated.ForeColor = Ui.Ink3;
-            lblUpdated.BackColor = Color.White;
+            lblUpdated.BackColor = Color.Transparent;
 
             card.Controls.Add(lk);
             card.Controls.Add(cmbKind);
@@ -2043,13 +2274,14 @@ namespace DshUsage
             card.Controls.Add(chkChain);
             card.Controls.Add(btnDist);
             card.Controls.Add(lblUpdated);
+            filterCard = card;
             filterBar.Controls.Add(card);
         }
 
         void DrawCardBorder(object sender, PaintEventArgs e)
         {
             Panel p = (Panel)sender;
-            Ui.DrawCard(e.Graphics, new Rectangle(0, 0, p.Width - 1, p.Height - 1), Color.White, Ui.Line, 8);
+            Ui.DrawCard(e.Graphics, new Rectangle(1, 1, p.Width - 3, p.Height - 4), Color.White, Color.FromArgb(0, 255, 255, 255), 10, 1f);
         }
 
         void GridCellPaint(object sender, DataGridViewCellPaintingEventArgs e)
@@ -2060,7 +2292,7 @@ namespace DshUsage
             if (hoverRow == e.RowIndex && e.ColumnIndex != 0 && e.ColumnIndex != 7 && !grid.Rows[e.RowIndex].Selected)
             {
                 e.PaintBackground(e.CellBounds, false);
-                using (SolidBrush b = new SolidBrush(Color.FromArgb(250, 252, 255)))
+                using (SolidBrush b = new SolidBrush(Color.FromArgb(244, 249, 255)))
                     e.Graphics.FillRectangle(b, e.CellBounds);
                 e.PaintContent(e.CellBounds);
                 e.Handled = true;
@@ -2071,7 +2303,7 @@ namespace DshUsage
             {
                 e.PaintBackground(e.CellBounds, true);
                 if (hoverRow == e.RowIndex && !grid.Rows[e.RowIndex].Selected)
-                    using (SolidBrush hb = new SolidBrush(Color.FromArgb(250, 252, 255)))
+                    using (SolidBrush hb = new SolidBrush(Color.FromArgb(249, 251, 255)))
                         e.Graphics.FillRectangle(hb, e.CellBounds);
                 SessionInfo s = grid.Rows[e.RowIndex].Tag as SessionInfo;
                 bool on = s != null && checkedIds.ContainsKey(s.Id);
@@ -2098,7 +2330,7 @@ namespace DshUsage
             {
                 e.PaintBackground(e.CellBounds, true);
                 if (hoverRow == e.RowIndex && !grid.Rows[e.RowIndex].Selected)
-                    using (SolidBrush hb = new SolidBrush(Color.FromArgb(250, 252, 255)))
+                    using (SolidBrush hb = new SolidBrush(Color.FromArgb(249, 251, 255)))
                         e.Graphics.FillRectangle(hb, e.CellBounds);
                 e.PaintContent(e.CellBounds);
                 SessionInfo s1 = grid.Rows[e.RowIndex].Tag as SessionInfo;
@@ -2129,7 +2361,7 @@ namespace DshUsage
             {
                 e.PaintBackground(e.CellBounds, true);
                 if (hoverRow == e.RowIndex && !grid.Rows[e.RowIndex].Selected)
-                    using (SolidBrush hb = new SolidBrush(Color.FromArgb(250, 252, 255)))
+                    using (SolidBrush hb = new SolidBrush(Color.FromArgb(249, 251, 255)))
                         e.Graphics.FillRectangle(hb, e.CellBounds);
                 SessionInfo s = grid.Rows[e.RowIndex].Tag as SessionInfo;
                 double c = s == null ? 0 : SessCost(s);
@@ -2149,13 +2381,16 @@ namespace DshUsage
         void KpiCardPaint(object sender, PaintEventArgs e)
         {
             Panel p = (Panel)sender;
-            Ui.DrawCard(e.Graphics, new Rectangle(1, 1, p.Width - 3, p.Height - 3), Color.White, Ui.Line, 8);
+            // hover 时给一圈很淡的苹果蓝内描边，鼠标在卡内任意子控件上都算
+            bool hot = p.RectangleToScreen(p.ClientRectangle).Contains(Control.MousePosition);
+            Ui.DrawCard(e.Graphics, new Rectangle(2, 2, p.Width - 5, p.Height - 5), Color.White,
+                hot ? Color.FromArgb(110, 186, 214, 255) : Color.FromArgb(0, 255, 255, 255), 10, 1f);
         }
 
         void FlatCardPaint(object sender, PaintEventArgs e)
         {
             Panel p = (Panel)sender;
-            Ui.DrawCard(e.Graphics, new Rectangle(1, 1, p.Width - 3, p.Height - 3), Color.White, Ui.Line, 8);
+            Ui.DrawCard(e.Graphics, new Rectangle(2, 2, p.Width - 5, p.Height - 5), Color.White, Color.FromArgb(0, 255, 255, 255), 10);
         }
 
         void SearchBoxPaint(object sender, PaintEventArgs e)
@@ -2262,7 +2497,7 @@ namespace DshUsage
             if (s == null) return;
             if (checkedIds.ContainsKey(s.Id)) checkedIds.Remove(s.Id); else checkedIds[s.Id] = true;
             DataGridViewRow row = grid.Rows[rowIndex];
-            Color baseC = (rowIndex % 2 == 1) ? Color.FromArgb(252, 253, 255) : Color.White;
+            Color baseC = (rowIndex % 2 == 1) ? Color.FromArgb(249, 251, 255) : Color.White;
             row.DefaultCellStyle.BackColor = checkedIds.ContainsKey(s.Id) ? Ui.RowSel : baseC;
             grid.InvalidateRow(rowIndex);
             UpdateTotal();
@@ -2417,6 +2652,10 @@ namespace DshUsage
             int pkPct = tot > 0 ? (int)((double)pk / tot * 100.0) : 0;
             kpi4v.Text = pkPct + " %";
             kpi4n.Text = string.Format("高峰 ¥{0:F2} · 闲时 ¥{1:F2}", pkCost, offCost);
+            // 每次填充都显式设色，避免任何遗留状态把数值停在浅色
+            kpi1v.ForeColor = Ui.Ink;
+            kpi3v.ForeColor = Ui.Ink;
+            kpi4v.ForeColor = Ui.Ink;
         }
 
         SessionInfo IndexedSession()
@@ -2509,7 +2748,15 @@ namespace DshUsage
             footer = new Panel();
             footer.Dock = DockStyle.Bottom;
             footer.Height = 96;
-            footer.BackColor = Color.White;
+            footer.BackColor = Color.Transparent;
+            footer.Paint += new PaintEventHandler(delegate(object sF, PaintEventArgs pF)
+            {
+                pF.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                using (SolidBrush gb = new SolidBrush(Color.FromArgb(198, 255, 255, 255)))
+                    pF.Graphics.FillRectangle(gb, 0, 0, footer.Width, footer.Height);
+                using (Pen gp = new Pen(Color.FromArgb(150, 255, 255, 255)))
+                    pF.Graphics.DrawLine(gp, 0, 0, footer.Width, 0);
+            });
 
             Panel line = new Panel();
             line.Height = 1;
@@ -2521,7 +2768,7 @@ namespace DshUsage
             lblSel.AutoSize = true;
             lblSel.Font = Ui.F(8.5f);
             lblSel.ForeColor = Ui.Ink3;
-            lblSel.BackColor = Color.White;
+            lblSel.BackColor = Color.Transparent;
             lblSel.Location = new Point(18, 12);
 
             lblTotalBig = new Label();
@@ -2529,7 +2776,7 @@ namespace DshUsage
             lblTotalBig.AutoSize = true;
             lblTotalBig.Font = Ui.FB(14f);
             lblTotalBig.ForeColor = Ui.Ink;
-            lblTotalBig.BackColor = Color.White;
+            lblTotalBig.BackColor = Color.Transparent;
             lblTotalBig.Location = new Point(16, 30);
 
             lblDetail = new Label();
@@ -2537,7 +2784,7 @@ namespace DshUsage
             lblDetail.AutoSize = true;
             lblDetail.Font = Ui.F(8.5f);
             lblDetail.ForeColor = Ui.Ink3;
-            lblDetail.BackColor = Color.White;
+            lblDetail.BackColor = Color.Transparent;
             lblDetail.Location = new Point(18, 62);
 
             lblEst = new Label();
@@ -2545,7 +2792,7 @@ namespace DshUsage
             lblEst.AutoSize = true;
             lblEst.Font = Ui.F(8.5f);
             lblEst.ForeColor = Ui.Nice;
-            lblEst.BackColor = Color.White;
+            lblEst.BackColor = Color.Transparent;
             lblEst.Location = new Point(18, 78);
 
             lblTotal = new Label();
@@ -2563,7 +2810,7 @@ namespace DshUsage
             flowB.Width = 372;
             flowB.FlowDirection = FlowDirection.RightToLeft;
             flowB.WrapContents = false;
-            flowB.BackColor = Color.White;
+            flowB.BackColor = Color.Transparent;
             flowB.Padding = new Padding(0, 32, 14, 0);
 
             btnExport = Ui.Ghost("导出 CSV", 104, 30);
@@ -3440,7 +3687,7 @@ namespace DshUsage
             else
             {
                 lblBudget.Text = string.Format("本月已用 ¥{0:F2}", c);
-                lblBudget.ForeColor = Color.FromArgb(110, 112, 122);
+                lblBudget.ForeColor = Color.FromArgb(98, 106, 120);
             }
         }
 
@@ -4126,6 +4373,205 @@ namespace DshUsage
             return list;
         }
 
+        static long CompNum(string s, int idx)
+        {
+            int i = idx;
+            while (i < s.Length && (s[i] == ' ' || s[i] == ':')) i++;
+            long v = 0;
+            bool any = false;
+            while (i < s.Length && s[i] >= '0' && s[i] <= '9') { v = v * 10 + (s[i] - '0'); i++; any = true; }
+            return any ? v : -1;
+        }
+
+        static int StrSpan(string s, int quoteAt)
+        {
+            int i = quoteAt + 1;
+            while (i < s.Length)
+            {
+                char ch = s[i];
+                if (ch == '\\') { i += 2; continue; }
+                if (ch == '"') break;
+                i++;
+            }
+            int e2 = i < s.Length ? i : s.Length;
+            return Math.Max(0, e2 - quoteAt - 1);
+        }
+
+        static long TimeBefore(string s, int idx)
+        {
+            int k = s.LastIndexOf("\"time\":", idx, StringComparison.Ordinal);
+            if (k < 0) return 0;
+            long v = CompNum(s, k + 7);
+            return v < 0 ? 0 : v;
+        }
+
+        // token 构成（按文本长度估算）+ 耗时（按时间戳实测），累加到 d
+        public static void ParseComp(string path, CompData d)
+        {
+            string text = ReadPlain(path);
+            int pos = 0;
+            long sStart = 0, sFirst = 0, sThink = 0, sReply = 0, sArg = 0, sExec = 0;
+            var pending = new Dictionary<string, long>();
+
+            while (pos < text.Length)
+            {
+                int nl = text.IndexOf('\n', pos);
+                if (nl < 0) nl = text.Length;
+                string line = text.Substring(pos, nl - pos);
+                pos = nl + 1;
+                if (line.Length < 24) continue;
+
+                if (line.IndexOf("\"type\":\"system/message\"", StringComparison.Ordinal) >= 0)
+                {
+                    d.Sys += line.Length;
+                    continue;
+                }
+                if (line.IndexOf("\"type\":\"request/header\"", StringComparison.Ordinal) >= 0)
+                {
+                    d.Tools += line.Length;
+                    continue;
+                }
+                if (line.IndexOf("\"type\":\"user/message\"", StringComparison.Ordinal) >= 0)
+                {
+                    d.User += line.Length;
+                    continue;
+                }
+                if (line.IndexOf("\"type\":\"step/start\"", StringComparison.Ordinal) >= 0)
+                {
+                    long t = CompNum(line, line.IndexOf("\"time\":", StringComparison.Ordinal) + 7);
+                    if (t > 0) { sStart = t; sFirst = 0; sThink = 0; sReply = 0; sArg = 0; sExec = 0; }
+                    continue;
+                }
+                if (line.IndexOf("\"type\":\"step/end\"", StringComparison.Ordinal) >= 0)
+                {
+                    long t = CompNum(line, line.IndexOf("\"time\":", StringComparison.Ordinal) + 7);
+                    if (t > 0 && sStart > 0)
+                    {
+                        long wait = sFirst > sStart ? sFirst - sStart : 0;
+                        long span = t - sStart;
+                        d.Wait += wait;
+                        d.ThinkMs += sThink;
+                        d.ReplyMs += sReply;
+                        d.ArgMs += sArg;
+                        d.ExecMs += sExec;
+                        long other = span - wait - sThink - sReply - sArg - sExec;
+                        if (other > 0) d.OtherMs += other;
+                        d.Steps++;
+                    }
+                    sStart = 0;
+                    continue;
+                }
+                if (line.IndexOf("\"type\":\"tool/call\"", StringComparison.Ordinal) >= 0)
+                {
+                    int ci = line.IndexOf("\"callId\":\"", StringComparison.Ordinal);
+                    int ti = line.IndexOf("\"time\":", StringComparison.Ordinal);
+                    if (ci >= 0 && ti >= 0)
+                    {
+                        int q = ci + 10;
+                        int e3 = line.IndexOf('"', q);
+                        long t = CompNum(line, ti + 7);
+                        if (e3 > q && t > 0) pending[line.Substring(q, e3 - q)] = t;
+                    }
+                    continue;
+                }
+                if (line.IndexOf("\"type\":\"tool/result\"", StringComparison.Ordinal) >= 0)
+                {
+                    d.ToolRes += line.Length;
+                    int ci = line.IndexOf("\"toolCallId\":\"", StringComparison.Ordinal);
+                    int ti = line.IndexOf("\"time\":", StringComparison.Ordinal);
+                    if (ci >= 0 && ti >= 0)
+                    {
+                        int q = ci + 14;
+                        int e4 = line.IndexOf('"', q);
+                        long t = CompNum(line, ti + 7);
+                        long st;
+                        if (e4 > q && t > 0 && pending.TryGetValue(line.Substring(q, e4 - q), out st) && t >= st)
+                            sExec += t - st;
+                    }
+                    continue;
+                }
+                if (line.IndexOf("\"type\":\"assistant/message\"", StringComparison.Ordinal) < 0) continue;
+
+                int u = line.IndexOf("\"usage\":{", StringComparison.Ordinal);
+                if (u >= 0)
+                {
+                    int tk = line.IndexOf("\"totalTokens\":", u, StringComparison.Ordinal);
+                    if (tk >= 0)
+                    {
+                        long tt = CompNum(line, tk + 15);
+                        if (tt > 0) d.Tokens += tt;
+                    }
+                }
+
+                int cs = line.IndexOf("\"content\":[", StringComparison.Ordinal);
+                int ce = cs >= 0 ? line.IndexOf("\"source\":{", cs, StringComparison.Ordinal) : -1;
+                if (cs >= 0 && ce > cs)
+                {
+                    string inner = line.Substring(cs, ce - cs);
+                    int p2 = 0;
+                    while (p2 < inner.Length)
+                    {
+                        int tr = inner.IndexOf("\"type\":\"", p2, StringComparison.Ordinal);
+                        if (tr < 0) break;
+                        int q0 = tr + 8;
+                        int q1 = inner.IndexOf('"', q0);
+                        if (q1 < 0) break;
+                        string kind = inner.Substring(q0, q1 - q0);
+                        int nx = q1 + 1;
+                        int tx = inner.IndexOf("\"text\":\"", nx, StringComparison.Ordinal);
+                        int ar = inner.IndexOf("\"arguments\":\"", nx, StringComparison.Ordinal);
+                        if (kind == "reasoning" && tx >= 0 && tx - nx < 400) d.Think += StrSpan(inner, tx + 7);
+                        else if (kind == "text" && tx >= 0 && tx - nx < 400) d.Reply += StrSpan(inner, tx + 7);
+                        else if (kind == "tool-call" && ar >= 0 && ar - nx < 500) d.ToolRes += StrSpan(inner, ar + 12);
+                        p2 = nx;
+                    }
+                }
+
+                int st0 = line.IndexOf("\"stream\":[", StringComparison.Ordinal);
+                if (st0 >= 0)
+                {
+                    int pp = st0;
+                    long bStart = 0;
+                    string bType = "";
+                    bool open = false;
+                    while (pp < line.Length)
+                    {
+                        int ibs = line.IndexOf("\"block-start\"", pp, StringComparison.Ordinal);
+                        int ibe = line.IndexOf("\"block-end\"", pp, StringComparison.Ordinal);
+                        if (ibs < 0 && ibe < 0) break;
+                        if (ibs >= 0 && (ibe < 0 || ibs < ibe))
+                        {
+                            long t = TimeBefore(line, ibs);
+                            if (t > 0 && sFirst == 0) sFirst = t;
+                            bStart = t;
+                            open = true;
+                            int ik = line.IndexOf("\"blockType\":\"", ibs, StringComparison.Ordinal);
+                            if (ik >= 0)
+                            {
+                                int kq = ik + 13;
+                                int ke = line.IndexOf('"', kq);
+                                if (ke > kq) bType = line.Substring(kq, ke - kq);
+                            }
+                            pp = ibs + 12;
+                        }
+                        else
+                        {
+                            long t = TimeBefore(line, ibe);
+                            if (open && t > bStart)
+                            {
+                                long span3 = t - bStart;
+                                if (bType == "reasoning") sThink += span3;
+                                else if (bType == "text") sReply += span3;
+                                else if (bType == "tool-call") sArg += span3;
+                            }
+                            open = false;
+                            pp = ibe + 10;
+                        }
+                    }
+                }
+            }
+        }
+
         public static Timeline Parse(string path)
         {
             var tl = new Timeline();
@@ -4290,7 +4736,7 @@ namespace DshUsage
             var foot = new Panel();
             foot.Dock = DockStyle.Bottom;
             foot.Height = Ui.S(62);
-            foot.BackColor = Ui.Bg;
+            foot.BackColor = Color.Transparent;
             Ui.Buf(foot);
 
             var chk = new FlatCheck();
@@ -4424,7 +4870,7 @@ namespace DshUsage
             MaximizeBox = false;
             MinimizeBox = false;
             StartPosition = FormStartPosition.CenterParent;
-            Font = new Font("微软雅黑", 9f);
+            Font = Ui.F(9f);
             BackColor = Ui.Bg;
 
             int yInt = 104;
@@ -4511,7 +4957,7 @@ namespace DshUsage
 
             var lblHoliday = new Label();
             lblHoliday.AutoSize = true;
-            lblHoliday.ForeColor = Color.FromArgb(150, 152, 162);
+            lblHoliday.ForeColor = Color.FromArgb(140, 148, 162);
             lblHoliday.Location = new Point(16, yTip);
             lblHoliday.Text = "单价单位：元/百万 token；默认＝DeepSeek 官方 deepseek-flash 价";
 
@@ -4575,7 +5021,8 @@ namespace DshUsage
             MinimumSize = new Size(392, 238);
             StartPosition = FormStartPosition.CenterParent;
             BackColor = Ui.Bg;
-            Font = new Font("微软雅黑", 9f);
+            Font = Ui.F(9f);
+            DoubleBuffered = true;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
@@ -4603,7 +5050,7 @@ namespace DshUsage
 
             var lblTip = new Label();
             lblTip.AutoSize = true;
-            lblTip.ForeColor = Color.FromArgb(140, 142, 152);
+            lblTip.ForeColor = Color.FromArgb(136, 144, 158);
             lblTip.Location = new Point(20, 92);
             lblTip.Text = "按小时精确裁剪；无逐小时记录者按整天估算";
 
@@ -4895,7 +5342,8 @@ namespace DshUsage
             MinimumSize = new Size(700, 520);
             StartPosition = FormStartPosition.CenterParent;
             BackColor = Ui.Bg;
-            Font = new Font("微软雅黑", 9f);
+            Font = Ui.F(9f);
+            DoubleBuffered = true;
 
             long[] ms = new long[ncol], ca = new long[ncol], ou = new long[ncol], tt = new long[ncol];
             double[] off = new double[ncol], pk = new double[ncol];
@@ -4969,13 +5417,13 @@ namespace DshUsage
             gv.ColumnHeadersHeight = Ui.S(34);
             gv.RowTemplate.Height = Ui.S(28);
             gv.ColumnHeadersDefaultCellStyle.WrapMode = DataGridViewTriState.False;
-            gv.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(244, 246, 250);
-            gv.ColumnHeadersDefaultCellStyle.ForeColor = Color.FromArgb(108, 117, 135);
-            gv.DefaultCellStyle.Font = new Font("微软雅黑", 9f);
+            gv.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(241, 246, 252);
+            gv.ColumnHeadersDefaultCellStyle.ForeColor = Color.FromArgb(96, 106, 124);
+            gv.DefaultCellStyle.Font = Ui.F(9f);
             gv.DefaultCellStyle.SelectionBackColor = Color.FromArgb(241, 246, 254);
             gv.DefaultCellStyle.SelectionForeColor = Color.Black;
-            gv.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(252, 253, 255);
-            gv.GridColor = Color.FromArgb(237, 240, 245);
+            gv.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(249, 251, 255);
+            gv.GridColor = Color.FromArgb(246, 250, 255);
             gv.Dock = DockStyle.Fill;
 
             gv.Columns.Add("k", "指标");
@@ -5018,7 +5466,7 @@ namespace DshUsage
             var foot = new Panel();
             foot.Dock = DockStyle.Bottom;
             foot.Height = 72;
-            foot.BackColor = Ui.Bg;
+            foot.BackColor = Color.Transparent;
 
             Label concl = new Label();
             concl.AutoSize = false;
@@ -5032,7 +5480,7 @@ namespace DshUsage
             var host = new Panel();
             host.Dock = DockStyle.Fill;
             host.Padding = new Padding(14, 8, 14, 0);
-            host.BackColor = Ui.Bg;
+            host.BackColor = Color.Transparent;
             host.Controls.Add(gv);
 
             Controls.Add(host);
@@ -5147,6 +5595,11 @@ namespace DshUsage
         List<Turn> turns;
         DataGridView grid;
 
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            Ui.PaintGlassBg(e.Graphics, ClientSize);
+        }
+
         public TurnForm(SessionInfo s, List<Turn> list)
         {
             turns = list;
@@ -5157,7 +5610,8 @@ namespace DshUsage
             MinimumSize = new Size(760, 440);
             StartPosition = FormStartPosition.CenterParent;
             BackColor = Ui.Bg;
-            Font = new Font("微软雅黑", 9f);
+            Font = Ui.F(9f);
+            DoubleBuffered = true;
 
             long totIn = 0, totCache = 0, totOut = 0;
             double offCost = 0, pkCost = 0;
@@ -5170,37 +5624,49 @@ namespace DshUsage
             }
             long totAll = totIn + totCache + totOut;
             int pct = totAll > 0 ? (int)((double)totCache / totAll * 100) : 0;
+            double pctF = totAll > 0 ? (double)totCache / totAll * 100 : 0;
 
             var head = new Panel();
             head.Dock = DockStyle.Top;
-            head.Height = 72;
-            head.BackColor = Ui.Bg;
+            head.Height = 88;
+            head.BackColor = Color.Transparent;
+
+            var ring = new RingPanel();
+            ring.Location = new Point(16, 6);
+            ring.Size = new Size(76, 76);
+            ring.BackColor = Color.FromArgb(242, 246, 252);
+            ring.Seg = new long[] { totCache, totIn, totOut };
+            ring.Cols = new Color[] { Color.FromArgb(63, 199, 164), Color.FromArgb(242, 179, 74), Color.FromArgb(74, 141, 240) };
+            ring.Big = RingBig(totAll);
+            ring.Small = pctF.ToString("F1") + "%";
+            ring.TipText = string.Format("缓存命中 {0}（{1}）\r\n未命中输入 {2}\r\n输出 {3}\r\n合计 {4}",
+                RingBig(totCache), pctF.ToString("F1") + "%", RingBig(totIn), RingBig(totOut), RingBig(totAll));
 
             var chart = new TurnChartPanel();
             chart.Dock = DockStyle.Top;
             chart.Height = 176;
             chart.Data = turns;
-            chart.BackColor = Color.White;
+            chart.BackColor = Color.FromArgb(246, 249, 254);
 
             var t1 = new Label();
             t1.AutoSize = true;
-            t1.Location = new Point(16, 10);
-            t1.Font = new Font("微软雅黑", 10.5f, FontStyle.Bold);
+            t1.Location = new Point(104, 10);
+            t1.Font = Ui.FB(10.5f);
             t1.Text = shown2;
 
             var t2 = new Label();
             t2.AutoSize = true;
-            t2.Location = new Point(16, 36);
-            t2.ForeColor = Color.FromArgb(110, 112, 122);
+            t2.Location = new Point(104, 36);
+            t2.ForeColor = Color.FromArgb(98, 106, 120);
             t2.Text = string.Format(
                 "{0} 轮  |  总 token {1:N0}  |  缓存命中 {2}%  |  闲时 {3} → ¥{4:F2}   高峰 {5} → ¥{6:F2}   合计 ¥{7:F2}",
                 turns.Count, totAll, pct, FmtShort(offTok), offCost, FmtShort(pkTok), pkCost, offCost + pkCost);
 
             var tip = new Label();
             tip.AutoSize = true;
-            tip.Location = new Point(16, 54);
+            tip.Location = new Point(104, 54);
             tip.ForeColor = Ui.Ink3;
-            tip.Text = string.Format("{0}    ·    按官方峰谷单价逐轮折算；橙色底＝高峰时段发生的轮次",
+            tip.Text = string.Format("{0}    ·    圆环：绿=缓存命中 橙=未命中输入 蓝=输出    ·    橙色底＝高峰轮次",
                 turns[0].T.ToString("MM-dd HH:mm") + " ~ " + turns[turns.Count - 1].T.ToString("MM-dd HH:mm"));
             if (s.IsSub)
                 tip.Text = "子智能体" + (s.ParentTitle.Length > 0 ? "（属于主对话：" + s.ParentTitle + "）" : "") + "    ·    " + tip.Text;
@@ -5208,6 +5674,7 @@ namespace DshUsage
             head.Controls.Add(t1);
             head.Controls.Add(t2);
             head.Controls.Add(tip);
+            head.Controls.Add(ring);
 
             grid = new DataGridView();
             grid.ReadOnly = true;
@@ -5220,17 +5687,17 @@ namespace DshUsage
             grid.MultiSelect = false;
             grid.BackgroundColor = Color.White;
             grid.BorderStyle = BorderStyle.None;
-            grid.CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal;
+            grid.CellBorderStyle = DataGridViewCellBorderStyle.None;
             grid.EnableHeadersVisualStyles = false;
             grid.ColumnHeadersHeight = Ui.S(32);
             grid.RowTemplate.Height = Ui.S(28);
-            grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(244, 246, 250);
-            grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.FromArgb(108, 117, 135);
-            grid.DefaultCellStyle.Font = new Font("微软雅黑", 9f);
+            grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(241, 246, 252);
+            grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.FromArgb(96, 106, 124);
+            grid.DefaultCellStyle.Font = Ui.F(9f);
             grid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(241, 246, 254);
             grid.DefaultCellStyle.SelectionForeColor = Color.Black;
-            grid.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(252, 253, 255);
-            grid.GridColor = Color.FromArgb(237, 240, 245);
+            grid.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(244, 248, 254);
+            grid.GridColor = Color.FromArgb(246, 250, 255);
             grid.Dock = DockStyle.Fill;
 
             grid.Columns.Add("t1", "轮次");
@@ -5267,7 +5734,7 @@ namespace DshUsage
             var foot = new Panel();
             foot.Dock = DockStyle.Bottom;
             foot.Height = 44;
-            foot.BackColor = Ui.Bg;
+            foot.BackColor = Color.Transparent;
 
             var lblFoot = new Label();
             lblFoot.AutoSize = true;
@@ -5303,7 +5770,7 @@ namespace DshUsage
             var gridHost = new Panel();
             gridHost.Dock = DockStyle.Fill;
             gridHost.Padding = new Padding(14, 0, 14, 0);
-            gridHost.BackColor = Ui.Bg;
+            gridHost.BackColor = Color.Transparent;
             gridHost.Controls.Add(grid);
             gridHost.Controls.Add(sumBar);
 
@@ -5317,6 +5784,13 @@ namespace DshUsage
         static string FmtShort(long n)
         {
             if (n >= 1000000) return string.Format("{0:F2}M", n / 1000000.0);
+            if (n >= 1000) return string.Format("{0:F1}K", n / 1000.0);
+            return n.ToString();
+        }
+
+        static string RingBig(long n)
+        {
+            if (n >= 1000000) return string.Format("{0:F1}M", n / 1000000.0);
             if (n >= 1000) return string.Format("{0:F1}K", n / 1000.0);
             return n.ToString();
         }
@@ -5366,7 +5840,7 @@ namespace DshUsage
         public BarChartPanel()
         {
             DoubleBuffered = true;
-            BackColor = Color.White;
+            BackColor = Color.FromArgb(246, 249, 254);
             MouseMove += new MouseEventHandler(OnMove);
             MouseLeave += new EventHandler(delegate(object s, EventArgs a) { if (hover >= 0) { hover = -1; Invalidate(); } });
             Resize += new EventHandler(delegate(object s, EventArgs a) { Invalidate(); });
@@ -5391,6 +5865,26 @@ namespace DshUsage
         Rectangle PlotArea()
         {
             return new Rectangle(Ui.S(58), Ui.S(34), Width - Ui.S(58) - Ui.S(26), Height - Ui.S(34) - Ui.S(40));
+        }
+
+        static GraphicsPath TopRound(Rectangle r, int rad)
+        {
+            int d = Math.Min(rad * 2, Math.Min(r.Width, r.Height));
+            GraphicsPath p = new GraphicsPath();
+            if (d >= 2)
+            {
+                p.AddArc(r.X, r.Y, d, d, 180, 90);
+                p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+            }
+            else
+            {
+                p.AddLine(r.X, r.Y, r.Right, r.Y);
+            }
+            p.AddLine(r.Right, r.Y + d / 2, r.Right, r.Bottom);
+            p.AddLine(r.Right, r.Bottom, r.X, r.Bottom);
+            p.AddLine(r.X, r.Bottom, r.X, r.Y + d / 2);
+            p.CloseFigure();
+            return p;
         }
 
         int HitIndex(int x)
@@ -5446,21 +5940,22 @@ namespace DshUsage
             g.DrawString(tot, fontT, new SolidBrush(Ui.Ink2), tx, Ui.S(8));
 
             var gridPen = new Pen(Ui.Line2);
+            var basePen = new Pen(Color.FromArgb(214, 222, 235));
             string fmt = step >= 1 ? "F0" : "F1";
             for (int i = 0; i <= 3; i++)
             {
                 double v = step * i;
                 int y = area.Bottom - (int)(area.Height * (v / top));
-                g.DrawLine(gridPen, area.Left, y, area.Right, y);
+                g.DrawLine(i == 0 ? basePen : gridPen, area.Left, y, area.Right, y);
                 g.DrawString(TokMode ? TokText(v) : ("¥" + v.ToString(fmt)), font, new SolidBrush(Ui.Ink3), 8, y - 7);
             }
 
             double slot = (double)area.Width / n;
             int barW = (int)Math.Round(Math.Min(44, Math.Max(6, slot * 0.55)));
             int every = Math.Max(1, (int)Math.Ceiling(n / 8.0));
-            var offBrush = new SolidBrush(Color.FromArgb(127, 176, 255));
-            var pkBrush = new SolidBrush(Color.FromArgb(47, 95, 224));
-            var hoverBrush = new SolidBrush(Color.FromArgb(255, 246, 231));
+            var offBrush = new SolidBrush(Color.FromArgb(166, 197, 250));
+            var pkBrush = new SolidBrush(Color.FromArgb(45, 99, 216));
+            var hoverBrush = new SolidBrush(Color.FromArgb(245, 248, 253));
             for (int i = 0; i < n; i++)
             {
                 int x = area.Left + (int)(slot * i) + (int)((slot - barW) / 2);
@@ -5468,8 +5963,13 @@ namespace DshUsage
                 int h2 = (int)(Get2(i) / top * area.Height);
                 if (i == hover)
                     g.FillRectangle(hoverBrush, area.Left + (int)(slot * i), area.Top, (int)Math.Max(1, slot), area.Height);
-                if (h1 > 0) g.FillRectangle(offBrush, x, area.Bottom - h1, barW, h1);
-                if (h2 > 0) g.FillRectangle(pkBrush, x, area.Bottom - h1 - h2, barW, h2);
+                if (h1 > 0)
+                {
+                    if (h2 > 0) g.FillRectangle(offBrush, x, area.Bottom - h1, barW, h1);
+                    else using (GraphicsPath cp = TopRound(new Rectangle(x, area.Bottom - h1, barW, h1), Ui.S(3))) g.FillPath(offBrush, cp);
+                }
+                if (h2 > 0)
+                    using (GraphicsPath cp = TopRound(new Rectangle(x, area.Bottom - h1 - h2, barW, h2), Ui.S(3))) g.FillPath(pkBrush, cp);
                 if (i % every == 0 || i == n - 1)
                 {
                     string t = Labels[i];
@@ -5492,32 +5992,122 @@ namespace DshUsage
             {
                 string l1 = Labels[hover];
                 string l2 = TokMode
-                    ? ("闲 " + TokText(Get1(hover)) + "   峰 " + TokText(Get2(hover)))
-                    : ("闲 ¥" + Get1(hover).ToString("N2") + "   峰 ¥" + Get2(hover).ToString("N2"));
+                    ? ("闲时 " + TokText(Get1(hover)) + "    高峰 " + TokText(Get2(hover)))
+                    : ("闲时 ¥" + Get1(hover).ToString("N2") + "    高峰 ¥" + Get2(hover).ToString("N2"));
                 string l3 = TokMode
                     ? ("合计 " + TokText(Get1(hover) + Get2(hover)) + " token")
                     : ("合计 ¥" + (Get1(hover) + Get2(hover)).ToString("N2"));
                 SizeF s1 = g.MeasureString(l1, fontT);
                 SizeF s2 = g.MeasureString(l2, font);
-                float bw = Math.Max(s1.Width, s2.Width) + 24;
-                float bh = 54;
+                SizeF s3 = g.MeasureString(l3, font);
+                float padX = Ui.S(13), padY = Ui.S(8), gapY = Ui.S(2);
+                float bw = Math.Max(s1.Width, Math.Max(s2.Width, s3.Width)) + padX * 2;
+                float bh = padY * 2 + s1.Height + gapY + s2.Height + gapY + s3.Height;
                 float bx = area.Left + (float)(slot * hover) + (float)(slot / 2) - bw / 2;
                 if (bx < 4) bx = 4;
                 if (bx + bw > Width - 4) bx = Width - 4 - bw;
-                float by = area.Top + 6;
+                int bh2 = (int)((Get1(hover) + Get2(hover)) / top * area.Height);
+                float by = area.Bottom - bh2 - bh - Ui.S(6);
+                if (by < area.Top + Ui.S(4)) by = area.Top + Ui.S(4);
                 Rectangle rr = new Rectangle((int)bx, (int)by, (int)bw, (int)bh);
-                using (GraphicsPath path = Ui.RoundPath(rr, 8))
+                using (GraphicsPath path = Ui.RoundPath(rr, Ui.S(8)))
                 {
-                    using (SolidBrush b = new SolidBrush(Color.FromArgb(27, 33, 48))) g.FillPath(b, path);
+                    using (SolidBrush b = new SolidBrush(Color.FromArgb(30, 34, 44))) g.FillPath(b, path);
                 }
-                g.DrawString(l1, fontT, Brushes.White, bx + Ui.S(12), by + Ui.S(6));
-                g.DrawString(l2, font, new SolidBrush(Color.FromArgb(190, 200, 220)), bx + Ui.S(12), by + Ui.S(24));
-                g.DrawString(l3, font, new SolidBrush(Color.FromArgb(190, 200, 220)), bx + Ui.S(12), by + Ui.S(38));
+                float tx2 = bx + padX;
+                float ty2 = by + padY;
+                g.DrawString(l1, fontT, new SolidBrush(Color.White), tx2, ty2);
+                ty2 += s1.Height + gapY;
+                g.DrawString(l2, font, new SolidBrush(Color.FromArgb(198, 208, 226)), tx2, ty2);
+                ty2 += s2.Height + gapY;
+                g.DrawString(l3, font, new SolidBrush(Color.FromArgb(168, 182, 208)), tx2, ty2);
             }
         }
     }
 
     // 单会话：逐轮花费柱 + 累计花费线
+    // 环形构成图：多段比例 + 圆心两行字
+    class RingPanel : Panel
+    {
+        public long[] Seg = new long[0];
+        public Color[] Cols = new Color[0];
+        public string Big = "";
+        public string Small = "";
+        public string TipText = "";
+        ToolTip tipCtl;
+
+        public RingPanel()
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint
+                | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+            BackColor = Ui.Bg;
+            tipCtl = new ToolTip();
+            tipCtl.InitialDelay = 250;
+            tipCtl.ReshowDelay = 100;
+            tipCtl.AutoPopDelay = 25000;
+        }
+
+        protected override void OnMouseEnter(EventArgs e)
+        {
+            base.OnMouseEnter(e);
+            if (tipCtl != null && TipText.Length > 0) tipCtl.SetToolTip(this, TipText);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            Graphics g = e.Graphics;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+            g.Clear(BackColor);
+
+            int pad = Ui.S(5);
+            int d = Math.Min(Width, Height) - pad * 2;
+            if (d < 24) return;
+            int w = Ui.S(7);
+            int ox = (Width - d) / 2, oy = (Height - d) / 2;
+            var rr = new Rectangle(ox + w / 2, oy + w / 2, d - w, d - w);
+
+            long tot = 0;
+            for (int i = 0; i < Seg.Length; i++) if (Seg[i] > 0) tot += Seg[i];
+
+            using (var bgp = new Pen(Color.FromArgb(232, 237, 245), w))
+                g.DrawEllipse(bgp, rr);
+
+            if (tot > 0)
+            {
+                float start = -90f;
+                for (int i = 0; i < Seg.Length; i++)
+                {
+                    if (Seg[i] <= 0) continue;
+                    float sweep = (float)(360.0 * Seg[i] / tot);
+                    Color c = (i < Cols.Length) ? Cols[i] : Ui.Accent;
+                    if (sweep >= 359.0f)
+                    {
+                        using (var pen = new Pen(c, w)) g.DrawEllipse(pen, rr);
+                        break;
+                    }
+                    float gap = sweep > 6f ? 1.6f : 0.4f;
+                    using (var pen = new Pen(c, w))
+                        g.DrawArc(pen, rr, start + gap / 2, sweep - gap);
+                    start += sweep;
+                }
+            }
+
+            var fb = Ui.FB(8.5f);
+            var fs = Ui.F(7.5f);
+            var sf = new StringFormat();
+            sf.Alignment = StringAlignment.Center;
+            sf.LineAlignment = StringAlignment.Center;
+            var rc1 = new Rectangle(ox, oy + d / 2 - Ui.S(15), d, Ui.S(18));
+            var rc2 = new Rectangle(ox, oy + d / 2 + Ui.S(3), d, Ui.S(15));
+            if (Big.Length > 0)
+                g.DrawString(Big, fb, new SolidBrush(Ui.Ink), rc1, sf);
+            if (Small.Length > 0)
+                g.DrawString(Small, fs, new SolidBrush(Ui.Ink3), rc2, sf);
+        }
+    }
+
     class TurnChartPanel : Panel
     {
         public List<Turn> Data = new List<Turn>();
@@ -5540,8 +6130,8 @@ namespace DshUsage
             base.OnPaint(e);
             Graphics g = e.Graphics;
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            var font = new Font("微软雅黑", 8f);
-            var fontT = new Font("微软雅黑", 9f);
+            var font = Ui.F(8f);
+            var fontT = Ui.F(9f);
             int n = Data.Count;
             if (n == 0) { g.DrawString("还没有数据", font, Brushes.Gray, 60, 40); return; }
 
@@ -5572,8 +6162,8 @@ namespace DshUsage
             int step = Math.Max(1, (int)Math.Ceiling(n / (double)Math.Max(40, area.Width / 4)));
             double slot = (double)area.Width / Math.Max(1, n / step);
             int barW = (int)Math.Round(Math.Max(2, Math.Min(18, slot * 0.7)));
-            var barBrush = new SolidBrush(Color.FromArgb(140, 190, 252));
-            var peakBrush = new SolidBrush(Color.FromArgb(60, 110, 220));
+            var barBrush = new SolidBrush(Color.FromArgb(166, 197, 250));
+            var peakBrush = new SolidBrush(Color.FromArgb(45, 99, 216));
 
             int bi = 0;
             var linePts = new List<PointF>();
@@ -5587,7 +6177,7 @@ namespace DshUsage
                 linePts.Add(new PointF(x + barW / 2f, area.Bottom - (int)(acc / sum * area.Height)));
                 bi++;
             }
-            var linePen = new Pen(Color.FromArgb(40, 90, 200), 1.6f);
+            var linePen = new Pen(Color.FromArgb(45, 99, 216), 1.6f);
             if (linePts.Count > 1) g.DrawLines(linePen, linePts.ToArray());
 
             // 标题、图例、总量（同一行，互不重叠）
@@ -5610,14 +6200,14 @@ namespace DshUsage
             {
                 string t0 = Data[0].T.ToString("MM-dd HH:mm");
                 string t1 = Data[n - 1].T.ToString("MM-dd HH:mm");
-                g.DrawString(t0, font, Brushes.Gray, area.Left, area.Bottom + 5);
+                g.DrawString(t0, font, new SolidBrush(Ui.Ink3), area.Left, area.Bottom + 5);
                 SizeF s1 = g.MeasureString(t1, font);
-                g.DrawString(t1, font, Brushes.Gray, area.Right - s1.Width, area.Bottom + 5);
+                g.DrawString(t1, font, new SolidBrush(Ui.Ink3), area.Right - s1.Width, area.Bottom + 5);
                 if (n > 2)
                 {
                     string tm = Data[n / 2].T.ToString("MM-dd HH:mm");
                     SizeF sm = g.MeasureString(tm, font);
-                    g.DrawString(tm, font, Brushes.Gray, area.Left + area.Width / 2 - sm.Width / 2, area.Bottom + 5);
+                    g.DrawString(tm, font, new SolidBrush(Ui.Ink3), area.Left + area.Width / 2 - sm.Width / 2, area.Bottom + 5);
                 }
             }
         }
@@ -5642,7 +6232,7 @@ namespace DshUsage
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
             var area = new Rectangle(54, 22, Width - 54 - 26, Height - 22 - 46);
             if (area.Width < 80 || area.Height < 50) return;
-            var font = new Font("微软雅黑", 8f);
+            var font = Ui.F(8f);
             if (Days.Count == 0)
             {
                 g.DrawString("还没有数据", font, Brushes.Gray, 60, 60);
@@ -5695,6 +6285,126 @@ namespace DshUsage
         }
     }
 
+    class CompData
+    {
+        public double Sys, Tools, User, ToolRes, Think, Reply;
+        public double Wait, ThinkMs, ReplyMs, ArgMs, ExecMs, OtherMs;
+        public long Tokens;
+        public int Steps;
+
+        public void Merge(CompData o)
+        {
+            Sys += o.Sys; Tools += o.Tools; User += o.User; ToolRes += o.ToolRes; Think += o.Think; Reply += o.Reply;
+            Wait += o.Wait; ThinkMs += o.ThinkMs; ReplyMs += o.ReplyMs; ArgMs += o.ArgMs; ExecMs += o.ExecMs; OtherMs += o.OtherMs;
+            Tokens += o.Tokens; Steps += o.Steps;
+        }
+    }
+
+    // 构成解析结果缓存：文件大小 + 修改时间没变就直接复用
+    static class CompCache
+    {
+        static readonly Dictionary<string, object[]> map = new Dictionary<string, object[]>();
+
+        public static CompData Get(string path)
+        {
+            object[] e;
+            if (!map.TryGetValue(path, out e)) return null;
+            try
+            {
+                var fi = new FileInfo(path);
+                if (fi.Exists && (long)e[0] == fi.Length && (long)e[1] == fi.LastWriteTimeUtc.Ticks)
+                    return (CompData)e[2];
+            }
+            catch { }
+            return null;
+        }
+
+        public static void Put(string path, CompData d)
+        {
+            try
+            {
+                var fi = new FileInfo(path);
+                if (!fi.Exists) return;
+                map[path] = new object[] { fi.Length, fi.LastWriteTimeUtc.Ticks, d };
+            }
+            catch { }
+        }
+    }
+
+    // 统计「构成」卡：左环 + 右侧清单
+    class CompCard : Panel
+    {
+        public string Title = "";
+        public string Sub = "";
+        public string[] Names = new string[0];
+        public double[] Pct = new double[0];
+        public string[] Vals = new string[0];
+        public Color[] Cols = new Color[0];
+        public readonly RingPanel Ring;
+
+        public CompCard()
+        {
+            DoubleBuffered = true;
+            BackColor = Color.FromArgb(251, 253, 255);
+            Ring = new RingPanel();
+            Ring.BackColor = Color.White;
+            Controls.Add(Ring);
+        }
+
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            int d = Math.Min(Ui.S(132), Height - Ui.S(104));
+            if (d < 60) d = Math.Min(Width, Height) - Ui.S(40);
+            Ring.Size = new Size(d, d);
+            Ring.Location = new Point(Ui.S(18), (Height - d) / 2 + Ui.S(6));
+            Invalidate();
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            Graphics g = e.Graphics;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+            g.Clear(BackColor);
+            using (var pen = new Pen(Ui.Line)) g.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+
+            g.DrawString(Title, Ui.FB(10.5f), new SolidBrush(Ui.Ink), Ui.S(18), Ui.S(12));
+            if (Sub.Length > 0)
+            {
+                var sfR = new StringFormat();
+                sfR.Alignment = StringAlignment.Far;
+                g.DrawString(Sub, Ui.F(8f), new SolidBrush(Ui.Ink3),
+                    new RectangleF(0, Ui.S(16), Width - Ui.S(18), Ui.S(18)), sfR);
+            }
+
+            int lx = Ring.Right + Ui.S(26);
+            int listW = Width - lx - Ui.S(20);
+            int n = Names.Length;
+            if (n == 0 || listW < 120) return;
+            int top = Ui.S(50);
+            int rowH = (Height - top - Ui.S(12)) / n;
+            if (rowH > Ui.S(40)) rowH = Ui.S(40);
+            var fN = Ui.F(8.5f);
+            var sfFar = new StringFormat();
+            sfFar.Alignment = StringAlignment.Far;
+            for (int i = 0; i < n; i++)
+            {
+                int y = top + i * rowH;
+                using (var b = new SolidBrush(i < Cols.Length ? Cols[i] : Ui.Accent))
+                    g.FillRectangle(b, lx, y + rowH / 2 - Ui.S(4), Ui.S(9), Ui.S(9));
+                g.DrawString(Names[i], fN, new SolidBrush(Ui.Ink),
+                    new RectangleF(lx + Ui.S(16), y + rowH / 2 - Ui.S(10), listW - Ui.S(180), Ui.S(20)));
+                g.DrawString(string.Format("{0:F1}%", i < Pct.Length ? Pct[i] : 0), fN, new SolidBrush(Ui.Ink2),
+                    new RectangleF(lx + listW - Ui.S(180), y + rowH / 2 - Ui.S(10), Ui.S(62), Ui.S(20)), sfFar);
+                if (i < Vals.Length)
+                    g.DrawString(Vals[i], fN, new SolidBrush(Ui.Ink3),
+                        new RectangleF(lx + listW - Ui.S(108), y + rowH / 2 - Ui.S(10), Ui.S(108), Ui.S(20)), sfFar);
+            }
+        }
+    }
+
     class DistForm : Form
     {
         public TabControl Tabs;
@@ -5726,6 +6436,17 @@ namespace DshUsage
             return n.ToString();
         }
 
+        static string Span(long ms)
+        {
+            if (ms <= 0) return "—";
+            long s = ms / 1000;
+            if (s < 60) return s + "s";
+            long m3 = s / 60, ss = s % 60;
+            if (m3 < 60) return m3 + "m" + (ss > 0 ? ss + "s" : "");
+            long h = m3 / 60, mm = m3 % 60;
+            return h + "h" + (mm > 0 ? mm + "m" : "");
+        }
+
         static string PjName(string cwd)
         {
             if (string.IsNullOrEmpty(cwd)) return "(未知)";
@@ -5749,20 +6470,21 @@ namespace DshUsage
             g.MultiSelect = false;
             g.BackgroundColor = Color.White;
             g.BorderStyle = BorderStyle.None;
-            g.CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal;
+            g.CellBorderStyle = DataGridViewCellBorderStyle.None;
+            g.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None;
             g.EnableHeadersVisualStyles = false;
             g.ColumnHeadersHeight = Ui.S(32);
             g.RowTemplate.Height = Ui.S(30);
-            g.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(244, 246, 250);
-            g.ColumnHeadersDefaultCellStyle.ForeColor = Color.FromArgb(108, 117, 135);
-            g.ColumnHeadersDefaultCellStyle.Font = new Font("微软雅黑", 9f);
+            g.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(243, 247, 253);
+            g.ColumnHeadersDefaultCellStyle.ForeColor = Color.FromArgb(96, 106, 124);
+            g.ColumnHeadersDefaultCellStyle.Font = Ui.F(9f);
             g.ColumnHeadersDefaultCellStyle.Padding = new Padding(8, 0, 8, 0);
-            g.DefaultCellStyle.Font = new Font("微软雅黑", 9f);
+            g.DefaultCellStyle.Font = Ui.F(9f);
             g.DefaultCellStyle.Padding = new Padding(8, 0, 8, 0);
             g.DefaultCellStyle.SelectionBackColor = Color.FromArgb(241, 246, 254);
             g.DefaultCellStyle.SelectionForeColor = Color.Black;
-            g.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(252, 253, 255);
-            g.GridColor = Color.FromArgb(237, 240, 245);
+            g.AlternatingRowsDefaultCellStyle.BackColor = Color.FromArgb(249, 251, 255);
+            g.GridColor = Color.FromArgb(246, 250, 255);
             return g;
         }
 
@@ -5802,7 +6524,7 @@ namespace DshUsage
 
         static Font boldFont()
         {
-            return new Font("微软雅黑", 9f, FontStyle.Bold);
+            return Ui.FB(9f);
         }
 
         TabPage Page(string title, Control body, string tip)
@@ -5812,7 +6534,7 @@ namespace DshUsage
             p.Padding = new Padding(10);
             var lbl = new Label();
             lbl.Text = tip;
-            lbl.ForeColor = Color.FromArgb(140, 142, 152);
+            lbl.ForeColor = Color.FromArgb(136, 144, 158);
             lbl.Dock = DockStyle.Top;
             lbl.Height = 22;
             body.Dock = DockStyle.Fill;
@@ -5846,9 +6568,36 @@ namespace DshUsage
         {
         }
 
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            Ui.PaintGlassBg(e.Graphics, ClientSize);
+        }
+
+        protected override void OnShown(EventArgs e)
+        {
+            base.OnShown(e);
+            try
+            {
+                System.IO.File.AppendAllText(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "dsh_dist.log"),
+                    "shown " + DateTime.Now.ToString("HH:mm:ss.fff") + "\r\n");
+            }
+            catch { }
+        }
+
         public DistForm(List<SessionInfo> sessions, string scope, string importCsv, List<SessionInfo> univ,
             DateTime? ra, DateTime? rb)
         {
+            DateTime t0 = DateTime.Now;
+            Action<string> T = delegate(string tag)
+            {
+                try
+                {
+                    System.IO.File.AppendAllText(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "dsh_dist.log"),
+                        tag + " " + DateTime.Now.ToString("HH:mm:ss.fff") + " +" + (int)((DateTime.Now - t0).TotalMilliseconds) + "ms\r\n");
+                }
+                catch { }
+            };
+            T("start");
             rangeA = ra;
             rangeB = rb;
             csvPath = importCsv;
@@ -5859,12 +6608,13 @@ namespace DshUsage
             MinimumSize = new Size(760, 520);
             StartPosition = FormStartPosition.CenterParent;
             BackColor = Ui.Bg;
-            Font = new Font("微软雅黑", 9f);
+            Font = Ui.F(9f);
+            DoubleBuffered = true;
 
             var head = new Panel();
             head.Dock = DockStyle.Top;
             head.Height = 42;
-            head.BackColor = Ui.Bg;
+            head.BackColor = Color.Transparent;
             var lbl = new Label();
             lbl.AutoSize = true;
             lbl.Location = new Point(18, 13);
@@ -5879,14 +6629,14 @@ namespace DshUsage
             Tabs.Font = Ui.F(9f);
             Tabs.Appearance = TabAppearance.FlatButtons;
             Tabs.SizeMode = TabSizeMode.Fixed;
-            Tabs.ItemSize = new Size(Ui.S(78), Ui.S(30));
+            Tabs.ItemSize = new Size(Ui.S(70), Ui.S(30));
             Tabs.DrawMode = TabDrawMode.OwnerDrawFixed;
             Tabs.DrawItem += new DrawItemEventHandler(delegate(object snd, DrawItemEventArgs de)
             {
                 Rectangle tr = Tabs.GetTabRect(de.Index);
                 Graphics g = de.Graphics;
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-                using (SolidBrush wb = new SolidBrush(Color.White)) g.FillRectangle(wb, tr.X, tr.Y, tr.Width, tr.Height);
+                using (SolidBrush wb = new SolidBrush(Color.FromArgb(246, 249, 254))) g.FillRectangle(wb, tr.X, tr.Y, tr.Width, tr.Height);
                 bool selNow = de.Index == Tabs.SelectedIndex;
                 Rectangle pill = new Rectangle(tr.X + 3, tr.Y + 3, tr.Width - 6, tr.Height - 8);
                 if (selNow)
@@ -5903,19 +6653,19 @@ namespace DshUsage
 
             var card = new Panel();
             card.Dock = DockStyle.Fill;
-            card.BackColor = Color.White;
+            card.BackColor = Color.Transparent;
             card.Padding = new Padding(10, 8, 10, 8);
             card.Paint += new PaintEventHandler(delegate(object snd, PaintEventArgs pe)
             {
                 pe.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-                Ui.DrawCard(pe.Graphics, new Rectangle(0, 0, card.Width - 1, card.Height - 1), Color.White, Ui.Line, Ui.S(10));
+                Ui.DrawCard(pe.Graphics, new Rectangle(1, 1, card.Width - 3, card.Height - 4), Color.White, Color.FromArgb(0, 255, 255, 255), Ui.S(10));
             });
             card.Controls.Add(Tabs);
 
             var host = new Panel();
             host.Dock = DockStyle.Fill;
             host.Padding = new Padding(16, 0, 16, 14);
-            host.BackColor = Ui.Bg;
+            host.BackColor = Color.Transparent;
             host.Controls.Add(card);
 
             // 聚合
@@ -5954,6 +6704,7 @@ namespace DshUsage
                 modelCount[mdl] = modelCount[mdl] + 1;
             }
 
+            T("agg-done");
             // --- 按天 ---
             var g1 = MakeGrid();
             g1.Columns.Add("c1", "日期");
@@ -6083,7 +6834,7 @@ namespace DshUsage
             var foot = new Label();
             foot.Dock = DockStyle.Bottom;
             foot.Height = 30;
-            foot.ForeColor = Color.FromArgb(110, 112, 122);
+            foot.ForeColor = Color.FromArgb(98, 106, 120);
             foot.Text = string.Format("    近 {0} 天合计 ¥{1:F2}，日均 ¥{2:F2}；最高 {3} ¥{4:F2}",
                 trend.Days.Count, sum, trend.Days.Count > 0 ? sum / trend.Days.Count : 0,
                 bestDay, best);
@@ -6099,7 +6850,7 @@ namespace DshUsage
             var lblDiag = new Label();
             lblDiag.Dock = DockStyle.Top;
             lblDiag.Height = 56;
-            lblDiag.ForeColor = Color.FromArgb(110, 112, 122);
+            lblDiag.ForeColor = Color.FromArgb(98, 106, 120);
             lblDiag.Text = string.Format(
                 "    总体缓存命中率 {0}%（命中 token 按 0.02/0.04 计价，未命中按 1/2 计价，差 50 倍）。\n    低于 80% 的会话列在下面：这类会话的上下文被反复按未命中价读进来。",
                 hitAll);
@@ -6276,7 +7027,7 @@ namespace DshUsage
                 int idx = g6.Rows.Add(ch[0], (int)ch[5] == 0 ? "—" : ((int)ch[5]).ToString(),
                     F(mt), F(st), F(tt), string.Format("{0:F2}", mc + sc), pctOf(tt));
                 g6.Rows[idx].Cells[0].ToolTipText = ch[0].ToString();
-                if (!(bool)ch[6]) g6.Rows[idx].Cells[0].Style.ForeColor = Color.FromArgb(150, 152, 162);
+                if (!(bool)ch[6]) g6.Rows[idx].Cells[0].Style.ForeColor = Color.FromArgb(140, 148, 162);
             }
             int r6 = g6.Rows.Add("合计", sNK, F(mTokK), F(sTokK), F(totTokK),
                 string.Format("{0:F2}", totCostK), "100%");
@@ -6284,7 +7035,7 @@ namespace DshUsage
             var footK = new Label();
             footK.Dock = DockStyle.Bottom;
             footK.Height = 26;
-            footK.ForeColor = Color.FromArgb(110, 112, 122);
+            footK.ForeColor = Color.FromArgb(98, 106, 120);
             footK.Text = "    提示：主列表勾上“选中主对话时连带子智能体”，统计里选中的就是整条任务链。";
             wrapK.Controls.Add(g6);
             wrapK.Controls.Add(lblK);
@@ -6302,7 +7053,7 @@ namespace DshUsage
             btnImp.Location = new Point(0, 4);
             var lblImp = new Label();
             lblImp.AutoSize = true;
-            lblImp.ForeColor = Color.FromArgb(110, 112, 122);
+            lblImp.ForeColor = Color.FromArgb(98, 106, 120);
             lblImp.Location = new Point(190, 10);
             lblImp.Text = "让对方在他程序里点【导出 CSV】，把文件发给你，选进来就能并排对比";
             barC.Controls.Add(btnImp);
@@ -6395,13 +7146,166 @@ namespace DshUsage
             var tipB = new Label();
             tipB.Dock = DockStyle.Bottom;
             tipB.Height = 28;
-            tipB.ForeColor = Color.FromArgb(110, 112, 122);
+            tipB.ForeColor = Color.FromArgb(98, 106, 120);
             tipB.Text = "    两张图横坐标对齐，可以直接横向对比：某天 token 涨得猛、花费涨得不多，说明当天命中率高、单位成本低。";
             wrapB.Controls.Add(tblB);
             wrapB.Controls.Add(tipB);
 
+            // --- 构成（token 估算 + 耗时实测；缓存命中即秒开，变了的文件后台重算） ---
+            var cTok = new CompCard();
+            cTok.Title = "Token 构成";
+            cTok.Names = new string[] { "系统提示词", "工具定义", "用户消息", "工具调用", "模型思考", "模型回复" };
+            cTok.Cols = new Color[] {
+                Color.FromArgb(139, 124, 246), Color.FromArgb(74, 141, 240), Color.FromArgb(46, 196, 182),
+                Color.FromArgb(242, 179, 74), Color.FromArgb(232, 93, 154), Color.FromArgb(124, 139, 161) };
+            var cTime = new CompCard();
+            cTime.Title = "耗时构成";
+            cTime.Names = new string[] { "模型等待", "模型思考", "模型回复", "工具参数", "工具执行", "其他开销" };
+            cTime.Cols = new Color[] {
+                Color.FromArgb(74, 141, 240), Color.FromArgb(139, 124, 246), Color.FromArgb(232, 93, 154),
+                Color.FromArgb(242, 179, 74), Color.FromArgb(46, 196, 182), Color.FromArgb(170, 178, 190) };
+
+            var cPaths = new List<string>();
+            try
+            {
+                string wroot = Raw.Root(Detector.FindDataDir());
+                if (wroot != null)
+                {
+                    var widx = Raw.Index(wroot);
+                    var ordS = new List<SessionInfo>(sessions);
+                    ordS.Sort(delegate(SessionInfo a1, SessionInfo b1) { return b1.Last.CompareTo(a1.Last); });
+                    foreach (SessionInfo s1 in ordS)
+                    {
+                        string rp2;
+                        if (!widx.TryGetValue(s1.Id, out rp2) || !File.Exists(rp2)) continue;
+                        cPaths.Add(rp2);
+                        if (cPaths.Count >= 3) break;
+                    }
+                }
+            }
+            catch { }
+
+            Action<CompData, int> fillComp = delegate(CompData cp, int cn)
+            {
+                double chTot = cp.Sys + cp.Tools + cp.User + cp.ToolRes + cp.Think + cp.Reply;
+                if (chTot <= 0) chTot = 1;
+                double perTok = cp.Tokens / chTot;
+                cTok.Sub = cn > 0 ? ("≈ 按文本长度估算（最近 " + cn + " 个会话）") : "≈ 按文本长度估算（解析中…）";
+                double[] cT = new double[] { cp.Sys, cp.Tools, cp.User, cp.ToolRes, cp.Think, cp.Reply };
+                double cSum = 0;
+                for (int i = 0; i < cT.Length; i++) cSum += cT[i];
+                if (cSum <= 0) cSum = 1;
+                var pctT = new double[6];
+                var valT = new string[6];
+                for (int i = 0; i < 6; i++)
+                {
+                    pctT[i] = cT[i] * 100.0 / cSum;
+                    valT[i] = cn > 0 ? "≈" + F((long)(cT[i] * perTok)) : "—";
+                }
+                cTok.Pct = pctT;
+                cTok.Vals = valT;
+                cTok.Ring.Seg = new long[] {
+                    (long)cp.Sys, (long)cp.Tools, (long)cp.User, (long)cp.ToolRes, (long)cp.Think, (long)cp.Reply };
+                cTok.Ring.Cols = cTok.Cols;
+                cTok.Ring.Big = cp.Tokens > 0 ? F(cp.Tokens) : "…";
+                cTok.Ring.Small = "总用量";
+                cTok.Ring.TipText = string.Format("系统提示词 ≈{0}\r\n工具定义 ≈{1}\r\n用户消息 ≈{2}\r\n工具调用 ≈{3}\r\n模型思考 ≈{4}\r\n模型回复 ≈{5}",
+                    F((long)(cp.Sys * perTok)), F((long)(cp.Tools * perTok)), F((long)(cp.User * perTok)),
+                    F((long)(cp.ToolRes * perTok)), F((long)(cp.Think * perTok)), F((long)(cp.Reply * perTok)));
+                cTok.Invalidate();
+
+                cTime.Sub = cn > 0 ? "按原始记录时间戳实测" : "解析中…";
+                double[] cM = new double[] { cp.Wait, cp.ThinkMs, cp.ReplyMs, cp.ArgMs, cp.ExecMs, cp.OtherMs };
+                double mSum = 0;
+                for (int i = 0; i < cM.Length; i++) mSum += cM[i];
+                if (mSum <= 0) mSum = 1;
+                var pctM = new double[6];
+                var valM = new string[6];
+                for (int i = 0; i < 6; i++)
+                {
+                    pctM[i] = cM[i] * 100.0 / mSum;
+                    valM[i] = Span((long)cM[i]);
+                }
+                cTime.Pct = pctM;
+                cTime.Vals = valM;
+                cTime.Ring.Seg = new long[] {
+                    (long)cp.Wait, (long)cp.ThinkMs, (long)cp.ReplyMs, (long)cp.ArgMs, (long)cp.ExecMs, (long)cp.OtherMs };
+                cTime.Ring.Cols = cTime.Cols;
+                cTime.Ring.Big = mSum > 0 ? Span((long)mSum) : "…";
+                cTime.Ring.Small = "活跃时长";
+                cTime.Ring.TipText = string.Format("模型等待 {0}\r\n模型思考 {1}\r\n模型回复 {2}\r\n工具参数 {3}\r\n工具执行 {4}\r\n其他开销 {5}",
+                    Span((long)cp.Wait), Span((long)cp.ThinkMs), Span((long)cp.ReplyMs),
+                    Span((long)cp.ArgMs), Span((long)cp.ExecMs), Span((long)cp.OtherMs));
+                cTime.Invalidate();
+            };
+
+            var comp0 = new CompData();
+            bool compNeed = false;
+            foreach (string pp in cPaths)
+            {
+                CompData cc0 = CompCache.Get(pp);
+                if (cc0 != null) comp0.Merge(cc0);
+                else compNeed = true;
+            }
+            fillComp(comp0, compNeed ? 0 : cPaths.Count);
+
+            if (compNeed && cPaths.Count > 0)
+            {
+                var th = new System.Threading.Thread(delegate()
+                {
+                    var full = new CompData();
+                    int okN = 0;
+                    foreach (string pp2 in cPaths)
+                    {
+                        CompData cc2 = CompCache.Get(pp2);
+                        if (cc2 == null)
+                        {
+                            try
+                            {
+                                cc2 = new CompData();
+                                Raw.ParseComp(pp2, cc2);
+                                CompCache.Put(pp2, cc2);
+                            }
+                            catch { cc2 = null; }
+                        }
+                        if (cc2 != null) { full.Merge(cc2); okN++; }
+                    }
+                    int got = okN;
+                    try
+                    {
+                        BeginInvoke((Action)delegate()
+                        {
+                            if (IsDisposed) return;
+                            fillComp(full, got);
+                        });
+                    }
+                    catch { }
+                });
+                th.IsBackground = true;
+                th.Start();
+            }
+
+            var tblComp = new TableLayoutPanel();
+            tblComp.Dock = DockStyle.Fill;
+            tblComp.ColumnCount = 1;
+            tblComp.RowCount = 2;
+            tblComp.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            tblComp.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+            tblComp.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+            cTok.Dock = DockStyle.Fill;
+            cTime.Dock = DockStyle.Fill;
+            cTok.Margin = new Padding(0, 0, 0, 5);
+            cTime.Margin = new Padding(0, 5, 0, 0);
+            tblComp.Controls.Add(cTok, 0, 0);
+            tblComp.Controls.Add(cTime, 0, 1);
+            var wrapComp = new Panel();
+            wrapComp.BackColor = Color.White;
+            wrapComp.Controls.Add(tblComp);
+
+            T("bodies-done");
             Tabs.TabPages.Add(Page("按天", g1));
             Tabs.TabPages.Add(Page("花费·用量", wrapB, "上：每天花费（¥），下：每天 token 消耗；浅蓝=闲时、深蓝=高峰，右上为区间合计"));
+            Tabs.TabPages.Add(Page("构成", wrapComp, "token 构成＝按各类文本长度估算（原始记录没有分类计数，故标 ≈）；耗时构成＝按原始记录时间戳实测"));
             Tabs.TabPages.Add(Page("按小时", g2));
             Tabs.TabPages.Add(Page("按项目", g3));
             Tabs.TabPages.Add(Page("按模型", g7, "按每个会话最后使用的模型汇总（会话中途换模型的仍归到最后一个）"));
@@ -6414,6 +7318,8 @@ namespace DshUsage
             Controls.Add(head);
             RightAlignGrids(host);
             Ui.ScaleTree(this);
+            Ui.Buf(this);
+            T("construct-end");
         }
 
         static void RightAlignGrids(Control parent)
@@ -6623,6 +7529,58 @@ namespace DshUsage
             return found;
         }
 
+        static System.Drawing.Text.PrivateFontCollection pfcKeep;
+
+        static string DumpFontResource(string resName)
+        {
+            try
+            {
+                using (System.IO.Stream s = System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream(resName))
+                {
+                    if (s == null) return null;
+                    string path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "dsh_" + resName + ".ttf");
+                    if (System.IO.File.Exists(path) && new System.IO.FileInfo(path).Length == s.Length) return path;
+                    using (System.IO.FileStream fs = new System.IO.FileStream(path, System.IO.FileMode.Create, System.IO.FileAccess.Write))
+                        s.CopyTo(fs);
+                    return path;
+                }
+            }
+            catch { return null; }
+        }
+
+        static void LoadUiFonts()
+        {
+            try
+            {
+                string a = DumpFontResource("DSH_Sans");
+                string b = DumpFontResource("DSH_Sans_Bold");
+                if (a == null && b == null) return;
+                System.Drawing.Text.PrivateFontCollection pfc = new System.Drawing.Text.PrivateFontCollection();
+                if (a != null) pfc.AddFontFile(a);
+                if (b != null) pfc.AddFontFile(b);
+                foreach (FontFamily fam in pfc.Families)
+                {
+                    if (fam.Name.IndexOf("Bold", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        if (Ui.FamBold == null) Ui.FamBold = fam;
+                    }
+                    else if (Ui.FamReg == null) Ui.FamReg = fam;
+                }
+                if (Ui.FamReg != null && Ui.FamBold == null) Ui.FamBold = Ui.FamReg;
+                pfcKeep = pfc;
+                try
+                {
+                    System.Text.StringBuilder sb = new System.Text.StringBuilder();
+                    sb.AppendLine("reg=" + (Ui.FamReg == null ? "(null)" : Ui.FamReg.Name));
+                    sb.AppendLine("bold=" + (Ui.FamBold == null ? "(null)" : Ui.FamBold.Name));
+                    foreach (FontFamily f2 in pfc.Families) sb.AppendLine("family=" + f2.Name);
+                    System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "dsh_font.log"), sb.ToString());
+                }
+                catch { }
+            }
+            catch { }
+        }
+
         static void Main(string[] args)
         {
             // 优先按“每个显示器独立”声明 DPI，失败再退回系统级
@@ -6632,9 +7590,12 @@ namespace DshUsage
                 try { SetProcessDpiAwareness(1); }
                 catch { try { SetProcessDPIAware(); } catch { } }
             }
+            foreach (string a0 in args)
+                if (a0.IndexOf("shot", StringComparison.OrdinalIgnoreCase) >= 0) Ui.NoAnim = true;
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             EnsureZstd();
+            LoadUiFonts();
 
             // 正常双击启动时只允许一个实例：先把残留在托盘里的旧实例结束掉，
             // 否则用户看到的可能一直是旧构建的窗口（这正是“改了还是不对”的常见原因）

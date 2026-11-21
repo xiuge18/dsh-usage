@@ -36,6 +36,8 @@ foreach ($d in $dlls) { $refs += ('/reference:' + (Join-Path $libs ($d + '.dll')
 # 6 个依赖库作为内嵌资源打进 exe，运行时释放到临时目录再加载 —— 保证分发只有一个文件
 $res = @()
 foreach ($d in $dlls) { $res += ('/resource:' + (Join-Path $libs ($d + '.dll')) + ',' + $d) }
+$res += ('/resource:' + (Join-Path $root 'ui-font\DSH-Sans.ttf') + ',DSH_Sans')
+$res += ('/resource:' + (Join-Path $root 'ui-font\DSH-Sans-Bold.ttf') + ',DSH_Sans_Bold')
 
 $cargs = @(
     '/nologo',
