@@ -2023,7 +2023,7 @@ namespace DshUsage
             chkChain.Location = new Point(508, 44);
             chkChain.CheckedChanged += new EventHandler(delegate { UpdateTotal(); });
 
-            btnDist = Ui.Ghost("时段分布", 84, 28);
+            btnDist = Ui.Ghost("统计", 66, 28);
             btnDist.Location = new Point(612, 45);
             btnDist.Click += new EventHandler(delegate { ShowDist(); });
 
