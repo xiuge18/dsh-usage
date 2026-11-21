@@ -4,7 +4,9 @@
 
 <h1 align="center">DSH记账</h1>
 
-<p align="center">把你本机 DeepSeek Harness（dsh）的会话记录算成一笔账：用了多少 token、花了多少钱、花在高峰还是闲时。</p>
+<p align="center">统计本机 <b>DeepSeek Harness（dsh）</b> 会话的 <b>token 用量</b>与<b>花费</b>：一共跑了多少量、折成多少钱、花在闲时还是高峰。</p>
+
+<p align="center"><i>关键词：DeepSeek Harness · dsh · token 用量统计 · 会话花费 · 成本估算 · 用量监控 · 时段计费 · WinForms 桌面工具</i></p>
 
 ![主界面](screenshot-main.png)
 
@@ -15,6 +17,8 @@ DeepSeek Harness 会在 `~/.dsh` 下保存每一轮对话的 token 用量和原�
 DSH记账 就是把这些本地记录读出来做汇总：按会话、按子智能体、按时间段、按闲时/高峰分别统计，能做多选对比，也能导出 CSV。
 
 界面是原生 WinForms 自绘，没有 Web 内核、没有 Electron，单个 exe 双击就跑，冷启动解析上百个会话大约 70ms，之后走增量缓存。
+
+如果你正在找「DeepSeek token 用量统计」「dsh 会话花费怎么算」「Harness 用量监控」这类工具，大概就是它。
 
 ## 功能
 
@@ -51,7 +55,7 @@ DSH记账 就是把这些本地记录读出来做汇总：按会话、按子智�
 
 ## 使用
 
-1. 到 [Releases](../../releases) 下载 `DSH记账.exe`
+1. 到 [Releases](../../releases) 下载 `DSH-Jizhang-v1.0.0.exe`
 2. 双击运行，首次会弹出使用教程
 3. 如果列表是空的，说明没自动找到 dsh 数据目录：点右上角【设置】，用右侧「…」选目录，或点「自动检测」
 
@@ -108,4 +112,5 @@ Windows 有图标缓存。改文件名或重启资源管理器可以刷新。
 ## 许可证
 
 [MIT](LICENSE)。随附的第三方组件（ZstdSharp 等 6 个程序集）同样是 MIT，版权声明见 [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt)。
+
 
